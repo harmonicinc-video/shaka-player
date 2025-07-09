@@ -172,7 +172,8 @@ describe('BjsnParser', () => {
 
       for (let i = 0; i < testCases.length; i++) {
         const testCase = testCases[i];
-        delete testCase[Object.keys(testCase).find((key) => testCase[key] === undefined)];
+        delete testCase[Object.keys(testCase).find((key) =>
+          testCase[key] === undefined)];
         const result = shaka.util.BjsnParser.validateSchema(testCase);
         expect(result).toBe(false, `Test case ${i} should be invalid`);
       }
@@ -292,7 +293,8 @@ describe('BjsnParser', () => {
       const seqNum = 10;
       const expected = '123-media-first-11.mp4';
 
-      const result = shaka.util.BjsnParser.generateNextSegmentUrl(templatePath, seqNum);
+      const result = shaka.util.BjsnParser.generateNextSegmentUrl(
+          templatePath, seqNum);
       expect(result).toBe(expected);
     });
 
@@ -318,9 +320,11 @@ describe('BjsnParser', () => {
         // eslint-disable-next-line no-template-curly-in-string
         {template: 'media_${num}.mp4', seqNum: 5, expected: 'media_6.mp4'},
         // eslint-disable-next-line no-template-curly-in-string
-        {template: '${num}-segment.mp4', seqNum: 10, expected: '11-segment.mp4'},
+        {template: '${num}-segment.mp4', seqNum: 10,
+          expected: '11-segment.mp4'},
         // eslint-disable-next-line no-template-curly-in-string
-        {template: 'stream/part-${num}.m4s', seqNum: 20, expected: 'stream/part-21.m4s'},
+        {template: 'stream/part-${num}.m4s', seqNum: 20,
+          expected: 'stream/part-21.m4s'},
       ];
 
       for (const {template, seqNum, expected} of testCases) {
@@ -333,7 +337,8 @@ describe('BjsnParser', () => {
 
   describe('extractGearNames', () => {
     it('should extract gear names correctly', () => {
-      const result = shaka.util.BjsnParser.extractGearNames(validBjsnJson.gear_list);
+      const result = shaka.util.BjsnParser.extractGearNames(
+          validBjsnJson.gear_list);
       expect(result).toEqual(['uhd5', 'hd5', 'ld5']);
     });
 
@@ -346,7 +351,7 @@ describe('BjsnParser', () => {
       const malformedGearList = [
         {gear1: {bitrate: 1000}}, // valid
         {}, // invalid - no keys
-        {gear2: {bitrate: 800}, gear3: {bitrate: 600}}, // invalid - multiple keys
+        {gear2: {bitrate: 800}, gear3: {bitrate: 600}}, // invalid - multiple
         {gear4: {bitrate: 400}}, // valid
       ];
 
@@ -357,7 +362,8 @@ describe('BjsnParser', () => {
 
   describe('getGearData', () => {
     it('should retrieve gear data by name', () => {
-      const result = shaka.util.BjsnParser.getGearData(validBjsnJson.gear_list, 'hd5');
+      const result = shaka.util.BjsnParser.getGearData(
+          validBjsnJson.gear_list, 'hd5');
       expect(result).toEqual({
         realtime_bitrate: 800000,
         drm: {key: 'value'},
@@ -365,7 +371,8 @@ describe('BjsnParser', () => {
     });
 
     it('should return null for non-existent gear', () => {
-      const result = shaka.util.BjsnParser.getGearData(validBjsnJson.gear_list, 'nonexistent');
+      const result = shaka.util.BjsnParser.getGearData(
+          validBjsnJson.gear_list, 'nonexistent');
       expect(result).toBeNull();
     });
 

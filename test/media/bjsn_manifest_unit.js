@@ -300,7 +300,8 @@ describe('BjsnManifestParser', () => {
       // Process test cases sequentially
       for (let i = 0; i < testCases.length; i++) {
         const testCase = testCases[i];
-        networkingEngine.setResponseValue(testCase.uri, validBjsnSegment.buffer);
+        networkingEngine.setResponseValue(testCase.uri,
+            validBjsnSegment.buffer);
 
         /* eslint-disable no-await-in-loop */
         await parser.start(testCase.uri, playerInterface);
@@ -376,7 +377,8 @@ describe('BjsnManifestParser', () => {
         template_path: 'segment_${num}.m4s',
       });
 
-      const jsonData = shaka.util.StringUtils.toUTF8(JSON.stringify(customBjsnData));
+      const jsonData = shaka.util.StringUtils.toUTF8(
+          JSON.stringify(customBjsnData));
       const customSegment = new Uint8Array(32 + jsonData.length);
       customSegment.set([
         // ftyp box
@@ -476,7 +478,8 @@ describe('BjsnManifestParser', () => {
         }],
       });
 
-      const jsonData = shaka.util.StringUtils.toUTF8(JSON.stringify(drmBjsnData));
+      const jsonData = shaka.util.StringUtils.toUTF8(
+          JSON.stringify(drmBjsnData));
       const drmSegment = new Uint8Array(32 + jsonData.length);
       drmSegment.set([
         // ftyp box
@@ -554,7 +557,8 @@ describe('BjsnManifestParser', () => {
       const testUri = 'http://example.com/media-first.mp4';
 
       // Set up a delayed response
-      networkingEngine.setDelayedResponse(testUri, validBjsnSegment.buffer, 1000);
+      networkingEngine.setDelayedResponse(testUri,
+          validBjsnSegment.buffer, 1000);
 
       const startPromise = parser.start(testUri, playerInterface);
 
@@ -584,10 +588,12 @@ describe('BjsnManifestParser', () => {
 
       await parser.start(testUri, playerInterface);
 
-      // The parser should not call these in Phase 1, but verify interface is properly set
+      // The parser should not call these in Phase 1, but verify interface is
+      // properly set
       expect(playerInterface.networkingEngine).toBeDefined();
       expect(typeof playerInterface.filter).toBe('function');
-      expect(typeof playerInterface.makeTextStreamsForClosedCaptions).toBe('function');
+      expect(typeof playerInterface.makeTextStreamsForClosedCaptions).toBe(
+          'function');
     });
 
     it('should handle player interface callbacks without errors', async () => {
