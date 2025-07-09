@@ -16,30 +16,31 @@ describe('BjsnParser', () => {
   beforeAll(() => {
     // Valid BJSN JSON data for testing
     validBjsnJson = {
-      "type": "dynamic",
-      "gear_num": 3,
-      "seq_num": 10,
-      "template_path": "123-media-first-${num}.mp4",
-      "gear_list": [
+      'type': 'dynamic',
+      'gear_num': 3,
+      'seq_num': 10,
+      // eslint-disable-next-line no-template-curly-in-string
+      'template_path': '123-media-first-${num}.mp4',
+      'gear_list': [
         {
-          "uhd5": {
-            "realtime_bitrate": 1000000,
-            "drm": { "key": "value" }
-          }
+          'uhd5': {
+            'realtime_bitrate': 1000000,
+            'drm': {'key': 'value'},
+          },
         },
         {
-          "hd5": {
-            "realtime_bitrate": 800000,
-            "drm": { "key": "value" }
-          }
+          'hd5': {
+            'realtime_bitrate': 800000,
+            'drm': {'key': 'value'},
+          },
         },
         {
-          "ld5": {
-            "realtime_bitrate": 300000,
-            "drm": { "key": "value" }
-          }
-        }
-      ]
+          'ld5': {
+            'realtime_bitrate': 300000,
+            'drm': {'key': 'value'},
+          },
+        },
+      ],
     };
 
     // Convert JSON to UTF-8 bytes
@@ -50,7 +51,7 @@ describe('BjsnParser', () => {
     bjsnBoxWithValidData = new Uint8Array(8 + validBjsnData.length);
     bjsnBoxWithValidData.set([
       0x00, 0x00, 0x00, 0x08 + validBjsnData.length, // size (header + payload)
-      0x62, 0x6A, 0x73, 0x6E // 'bjsn' type
+      0x62, 0x6A, 0x73, 0x6E, // 'bjsn' type
     ], 0);
     bjsnBoxWithValidData.set(validBjsnData, 8);
 
@@ -63,7 +64,7 @@ describe('BjsnParser', () => {
       0x69, 0x73, 0x6F, 0x6D, // major brand 'isom'
       0x00, 0x00, 0x00, 0x00, // minor version
       0x69, 0x73, 0x6F, 0x6D, // compatible brand 'isom'
-      0x6D, 0x70, 0x34, 0x31 // compatible brand 'mp41'
+      0x6D, 0x70, 0x34, 0x31, // compatible brand 'mp41'
     ], 0);
     mp4WithBjsnBox.set(bjsnBoxWithValidData, 24);
 
@@ -80,7 +81,7 @@ describe('BjsnParser', () => {
       0x00, 0x00, 0x00, 0x10, // size
       0x6D, 0x64, 0x61, 0x74, // 'mdat'
       0x00, 0x11, 0x22, 0x33, // some data
-      0x44, 0x55, 0x66, 0x77
+      0x44, 0x55, 0x66, 0x77,
     ]);
 
     // Create partial MP4 data (incomplete BJSN box)
@@ -94,7 +95,7 @@ describe('BjsnParser', () => {
       0x6D, 0x70, 0x34, 0x31, // compatible brand 'mp41'
       // Incomplete BJSN box (header only)
       0x00, 0x00, 0x00, 0x50, // size (larger than actual data)
-      0x62, 0x6A, 0x73, 0x6E  // 'bjsn' type (no payload)
+      0x62, 0x6A, 0x73, 0x6E,  // 'bjsn' type (no payload)
     ]);
 
     // Create BJSN box with invalid JSON
@@ -103,7 +104,7 @@ describe('BjsnParser', () => {
     invalidJsonBjsnBox = new Uint8Array(8 + invalidJsonData.length);
     invalidJsonBjsnBox.set([
       0x00, 0x00, 0x00, 0x08 + invalidJsonData.length, // size
-      0x62, 0x6A, 0x73, 0x6E // 'bjsn' type
+      0x62, 0x6A, 0x73, 0x6E, // 'bjsn' type
     ], 0);
     invalidJsonBjsnBox.set(invalidJsonData, 8);
   });
@@ -111,11 +112,12 @@ describe('BjsnParser', () => {
   describe('parseFromSegment', () => {
     it('should parse valid BJSN box from segment', () => {
       const result = shaka.util.BjsnParser.parseFromSegment(mp4WithBjsnBox);
-      
+
       expect(result).not.toBeNull();
       expect(result.type).toBe('dynamic');
       expect(result.gear_num).toBe(3);
       expect(result.seq_num).toBe(10);
+      // eslint-disable-next-line no-template-curly-in-string
       expect(result.template_path).toBe('123-media-first-${num}.mp4');
       expect(result.gear_list).toEqual(validBjsnJson.gear_list);
     });
@@ -139,7 +141,7 @@ describe('BjsnParser', () => {
         0x69, 0x73, 0x6F, 0x6D, // major brand 'isom'
         0x00, 0x00, 0x00, 0x00, // minor version
         0x69, 0x73, 0x6F, 0x6D, // compatible brand 'isom'
-        0x6D, 0x70, 0x34, 0x31 // compatible brand 'mp41'
+        0x6D, 0x70, 0x34, 0x31, // compatible brand 'mp41'
       ], 0);
       mp4WithInvalidJson.set(invalidJsonBjsnBox, 24);
 
@@ -161,58 +163,65 @@ describe('BjsnParser', () => {
 
     it('should reject missing required fields', () => {
       const testCases = [
-        Object.assign({}, validBjsnJson, { type: undefined }),
-        Object.assign({}, validBjsnJson, { gear_num: undefined }),
-        Object.assign({}, validBjsnJson, { seq_num: undefined }),
-        Object.assign({}, validBjsnJson, { template_path: undefined }),
-        Object.assign({}, validBjsnJson, { gear_list: undefined })
+        Object.assign({}, validBjsnJson, {type: undefined}),
+        Object.assign({}, validBjsnJson, {gear_num: undefined}),
+        Object.assign({}, validBjsnJson, {seq_num: undefined}),
+        Object.assign({}, validBjsnJson, {template_path: undefined}),
+        Object.assign({}, validBjsnJson, {gear_list: undefined}),
       ];
 
-      testCases.forEach((testCase, index) => {
-        delete testCase[Object.keys(testCase).find(key => testCase[key] === undefined)];
+      for (let i = 0; i < testCases.length; i++) {
+        const testCase = testCases[i];
+        delete testCase[Object.keys(testCase).find((key) => testCase[key] === undefined)];
         const result = shaka.util.BjsnParser.validateSchema(testCase);
-        expect(result).toBe(false, `Test case ${index} should be invalid`);
-      });
+        expect(result).toBe(false, `Test case ${i} should be invalid`);
+      }
     });
 
     it('should reject invalid type field', () => {
       const invalidTypes = ['invalid', 'live', '', null, 123];
-      
-      invalidTypes.forEach((invalidType) => {
-        const testData = Object.assign({}, validBjsnJson, { type: invalidType });
+
+      for (const invalidType of invalidTypes) {
+        const testData = Object.assign({}, validBjsnJson, {type: invalidType});
         const result = shaka.util.BjsnParser.validateSchema(testData);
         expect(result).toBe(false, `Type "${invalidType}" should be invalid`);
-      });
+      }
     });
 
     it('should accept valid type fields', () => {
       const validTypes = ['dynamic', 'static'];
-      
-      validTypes.forEach((validType) => {
-        const testData = Object.assign({}, validBjsnJson, { type: validType });
+
+      for (const validType of validTypes) {
+        const testData = Object.assign({}, validBjsnJson, {type: validType});
         const result = shaka.util.BjsnParser.validateSchema(testData);
         expect(result).toBe(true, `Type "${validType}" should be valid`);
-      });
+      }
     });
 
     it('should reject invalid gear_num field', () => {
       const invalidGearNums = [0, -1, 'string', null, undefined];
-      
-      invalidGearNums.forEach((invalidGearNum) => {
-        const testData = Object.assign({}, validBjsnJson, { gear_num: invalidGearNum });
+
+      for (const invalidGearNum of invalidGearNums) {
+        const testData = Object.assign({}, validBjsnJson, {
+          gear_num: invalidGearNum,
+        });
         const result = shaka.util.BjsnParser.validateSchema(testData);
-        expect(result).toBe(false, `gear_num "${invalidGearNum}" should be invalid`);
-      });
+        expect(result).toBe(false,
+            `gear_num "${invalidGearNum}" should be invalid`);
+      }
     });
 
     it('should reject invalid seq_num field', () => {
       const invalidSeqNums = [-1, 'string', null, undefined];
-      
-      invalidSeqNums.forEach((invalidSeqNum) => {
-        const testData = Object.assign({}, validBjsnJson, { seq_num: invalidSeqNum });
+
+      for (const invalidSeqNum of invalidSeqNums) {
+        const testData = Object.assign({}, validBjsnJson, {
+          seq_num: invalidSeqNum,
+        });
         const result = shaka.util.BjsnParser.validateSchema(testData);
-        expect(result).toBe(false, `seq_num "${invalidSeqNum}" should be invalid`);
-      });
+        expect(result).toBe(false,
+            `seq_num "${invalidSeqNum}" should be invalid`);
+      }
     });
 
     it('should reject invalid template_path field', () => {
@@ -222,14 +231,18 @@ describe('BjsnParser', () => {
         null,
         undefined,
         123,
-        'path-with-wrong-placeholder-${wrong}.mp4'
+        // eslint-disable-next-line no-template-curly-in-string
+        'path-with-wrong-placeholder-${wrong}.mp4',
       ];
-      
-      invalidTemplatePaths.forEach((invalidPath) => {
-        const testData = Object.assign({}, validBjsnJson, { template_path: invalidPath });
+
+      for (const invalidPath of invalidTemplatePaths) {
+        const testData = Object.assign({}, validBjsnJson, {
+          template_path: invalidPath,
+        });
         const result = shaka.util.BjsnParser.validateSchema(testData);
-        expect(result).toBe(false, `template_path "${invalidPath}" should be invalid`);
-      });
+        expect(result).toBe(false,
+            `template_path "${invalidPath}" should be invalid`);
+      }
     });
 
     it('should reject invalid gear_list field', () => {
@@ -240,71 +253,81 @@ describe('BjsnParser', () => {
         'string',
         [null],
         [{}], // empty gear object
-        [{ gear1: null }], // null gear data
-        [{ gear1: 'string' }], // non-object gear data
-        [{ gear1: {}, gear2: {} }] // multiple keys in single gear
+        [{gear1: null}], // null gear data
+        [{gear1: 'string'}], // non-object gear data
+        [{gear1: {}, gear2: {}}], // multiple keys in single gear
       ];
-      
-      invalidGearLists.forEach((invalidGearList) => {
-        const testData = Object.assign({}, validBjsnJson, { gear_list: invalidGearList });
+
+      for (const invalidGearList of invalidGearLists) {
+        const testData = Object.assign({}, validBjsnJson, {
+          gear_list: invalidGearList,
+        });
         const result = shaka.util.BjsnParser.validateSchema(testData);
-        expect(result).toBe(false, `gear_list should be invalid`);
-      });
+        expect(result).toBe(false, 'gear_list should be invalid');
+      }
     });
 
     it('should reject invalid realtime_bitrate in gear data', () => {
       const invalidBitrates = ['string', null, undefined, -1];
-      
-      invalidBitrates.forEach((invalidBitrate) => {
+
+      for (const invalidBitrate of invalidBitrates) {
         const testData = Object.assign({}, validBjsnJson, {
           gear_list: [{
             test_gear: {
-              realtime_bitrate: invalidBitrate
-            }
-          }]
+              realtime_bitrate: invalidBitrate,
+            },
+          }],
         });
         const result = shaka.util.BjsnParser.validateSchema(testData);
-        expect(result).toBe(false, `realtime_bitrate "${invalidBitrate}" should be invalid`);
-      });
+        expect(result).toBe(false,
+            `realtime_bitrate "${invalidBitrate}" should be invalid`);
+      }
     });
   });
 
   describe('generateNextSegmentUrl', () => {
     it('should generate correct next segment URL', () => {
+      // eslint-disable-next-line no-template-curly-in-string
       const templatePath = '123-media-first-${num}.mp4';
       const seqNum = 10;
       const expected = '123-media-first-11.mp4';
-      
+
       const result = shaka.util.BjsnParser.generateNextSegmentUrl(templatePath, seqNum);
       expect(result).toBe(expected);
     });
 
     it('should handle different sequence numbers', () => {
+      // eslint-disable-next-line no-template-curly-in-string
       const templatePath = 'segment-${num}.mp4';
-      
+
       const testCases = [
-        { seqNum: 0, expected: 'segment-1.mp4' },
-        { seqNum: 99, expected: 'segment-100.mp4' },
-        { seqNum: 999, expected: 'segment-1000.mp4' }
+        {seqNum: 0, expected: 'segment-1.mp4'},
+        {seqNum: 99, expected: 'segment-100.mp4'},
+        {seqNum: 999, expected: 'segment-1000.mp4'},
       ];
-      
-      testCases.forEach(({ seqNum, expected }) => {
-        const result = shaka.util.BjsnParser.generateNextSegmentUrl(templatePath, seqNum);
+
+      for (const {seqNum, expected} of testCases) {
+        const result = shaka.util.BjsnParser.generateNextSegmentUrl(
+            templatePath, seqNum);
         expect(result).toBe(expected);
-      });
+      }
     });
 
     it('should handle different template formats', () => {
       const testCases = [
-        { template: 'media_${num}.mp4', seqNum: 5, expected: 'media_6.mp4' },
-        { template: '${num}-segment.mp4', seqNum: 10, expected: '11-segment.mp4' },
-        { template: 'stream/part-${num}.m4s', seqNum: 20, expected: 'stream/part-21.m4s' }
+        // eslint-disable-next-line no-template-curly-in-string
+        {template: 'media_${num}.mp4', seqNum: 5, expected: 'media_6.mp4'},
+        // eslint-disable-next-line no-template-curly-in-string
+        {template: '${num}-segment.mp4', seqNum: 10, expected: '11-segment.mp4'},
+        // eslint-disable-next-line no-template-curly-in-string
+        {template: 'stream/part-${num}.m4s', seqNum: 20, expected: 'stream/part-21.m4s'},
       ];
-      
-      testCases.forEach(({ template, seqNum, expected }) => {
-        const result = shaka.util.BjsnParser.generateNextSegmentUrl(template, seqNum);
+
+      for (const {template, seqNum, expected} of testCases) {
+        const result = shaka.util.BjsnParser.generateNextSegmentUrl(
+            template, seqNum);
         expect(result).toBe(expected);
-      });
+      }
     });
   });
 
@@ -321,12 +344,12 @@ describe('BjsnParser', () => {
 
     it('should handle malformed gear entries', () => {
       const malformedGearList = [
-        { gear1: { bitrate: 1000 } }, // valid
+        {gear1: {bitrate: 1000}}, // valid
         {}, // invalid - no keys
-        { gear2: { bitrate: 800 }, gear3: { bitrate: 600 } }, // invalid - multiple keys
-        { gear4: { bitrate: 400 } } // valid
+        {gear2: {bitrate: 800}, gear3: {bitrate: 600}}, // invalid - multiple keys
+        {gear4: {bitrate: 400}}, // valid
       ];
-      
+
       const result = shaka.util.BjsnParser.extractGearNames(malformedGearList);
       expect(result).toEqual(['gear1', 'gear4']);
     });
@@ -337,7 +360,7 @@ describe('BjsnParser', () => {
       const result = shaka.util.BjsnParser.getGearData(validBjsnJson.gear_list, 'hd5');
       expect(result).toEqual({
         realtime_bitrate: 800000,
-        drm: { key: 'value' }
+        drm: {key: 'value'},
       });
     });
 
@@ -353,16 +376,16 @@ describe('BjsnParser', () => {
 
     it('should handle exact gear name matches only', () => {
       const gearList = [
-        { hd5: { bitrate: 800 } },
-        { hd50: { bitrate: 1000 } }
+        {hd5: {bitrate: 800}},
+        {hd50: {bitrate: 1000}},
       ];
-      
+
       const result1 = shaka.util.BjsnParser.getGearData(gearList, 'hd5');
       const result2 = shaka.util.BjsnParser.getGearData(gearList, 'hd50');
       const result3 = shaka.util.BjsnParser.getGearData(gearList, 'hd');
-      
-      expect(result1).toEqual({ bitrate: 800 });
-      expect(result2).toEqual({ bitrate: 1000 });
+
+      expect(result1).toEqual({bitrate: 800});
+      expect(result2).toEqual({bitrate: 1000});
       expect(result3).toBeNull();
     });
   });
@@ -374,9 +397,9 @@ describe('BjsnParser', () => {
       const bjsnBoxWithEmptyJson = new Uint8Array([
         0x00, 0x00, 0x00, 0x08 + emptyJsonData.length,
         0x62, 0x6A, 0x73, 0x6E,
-        ...emptyJsonData
+        ...emptyJsonData,
       ]);
-      
+
       const mp4WithEmptyJson = new Uint8Array([
         // ftyp box
         0x00, 0x00, 0x00, 0x18,
@@ -386,7 +409,7 @@ describe('BjsnParser', () => {
         0x69, 0x73, 0x6F, 0x6D,
         0x6D, 0x70, 0x34, 0x31,
         // BJSN box with empty JSON
-        ...bjsnBoxWithEmptyJson
+        ...bjsnBoxWithEmptyJson,
       ]);
 
       const result = shaka.util.BjsnParser.parseFromSegment(mp4WithEmptyJson);
@@ -397,7 +420,7 @@ describe('BjsnParser', () => {
       const corruptedMp4 = new Uint8Array([
         0xFF, 0xFF, 0xFF, 0xFF, // invalid box size
         0x62, 0x6A, 0x73, 0x6E, // bjsn type
-        0x00, 0x11, 0x22, 0x33  // some data
+        0x00, 0x11, 0x22, 0x33,  // some data
       ]);
 
       const result = shaka.util.BjsnParser.parseFromSegment(corruptedMp4);
@@ -408,11 +431,11 @@ describe('BjsnParser', () => {
       // Create a large MP4 with BJSN box at the beginning
       const largeData = new Uint8Array(10000);
       largeData.fill(0x00); // Fill with zeros
-      
+
       // Add valid BJSN box at the start
       const bjsnBox = bjsnBoxWithValidData;
       largeData.set(bjsnBox, 0);
-      
+
       const result = shaka.util.BjsnParser.parseFromSegment(largeData);
       expect(result).not.toBeNull();
       expect(result.type).toBe('dynamic');

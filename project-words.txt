@@ -482,6 +482,9 @@ avinfo
 awesomplete
 axinom
 beatle
+BJSN
+Bjsn
+bjsn
 checkmark
 crbug
 *deadbeef*
@@ -503,6 +506,7 @@ malform
 masterlist
 mbps
 msdk
+Nums
 onservicecallback
 productinfo
 RMKSA

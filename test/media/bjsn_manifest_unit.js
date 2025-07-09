@@ -43,7 +43,8 @@ describe('BjsnManifestParser', () => {
       'type': 'static',
       'gear_num': 1,
       'seq_num': 10,
-      'template_path': 'media-$' + '{num}.mp4',
+      // eslint-disable-next-line no-template-curly-in-string
+      'template_path': 'media-${num}.mp4',
       'gear_list': [
         {
           'hd5': {
@@ -104,7 +105,7 @@ describe('BjsnManifestParser', () => {
       const unconfiguredParser = new shaka.media.BjsnManifestParser();
 
       await expectAsync(
-        unconfiguredParser.start('http://example.com/test.mp4', playerInterface)
+          unconfiguredParser.start('http://example.com/test.mp4', playerInterface),
       ).toBeRejected();
     });
 
@@ -151,7 +152,8 @@ describe('BjsnManifestParser', () => {
       expect(videoStream.originalId).toBe('hd5_video');
       expect(videoStream.mimeType).toBe('video/mp4');
       expect(videoStream.codecs).toBe('avc1.640028');
-      expect(videoStream.type).toBe(shaka.util.ManifestParserUtils.ContentType.VIDEO);
+      expect(videoStream.type).toBe(
+          shaka.util.ManifestParserUtils.ContentType.VIDEO);
       expect(videoStream.bandwidth).toBe(800000);
       expect(videoStream.segmentIndex).toBeDefined();
     });
@@ -168,7 +170,8 @@ describe('BjsnManifestParser', () => {
       expect(audioStream.originalId).toBe('hd5_audio');
       expect(audioStream.mimeType).toBe('audio/mp4');
       expect(audioStream.codecs).toBe('mp4a.40.2');
-      expect(audioStream.type).toBe(shaka.util.ManifestParserUtils.ContentType.AUDIO);
+      expect(audioStream.type).toBe(
+          shaka.util.ManifestParserUtils.ContentType.AUDIO);
       expect(audioStream.channelsCount).toBe(2);
       expect(audioStream.audioSamplingRate).toBe(48000);
     });
@@ -212,8 +215,11 @@ describe('BjsnManifestParser', () => {
       parser.configure(config);
 
       // Test dynamic content
-      const dynamicBjsnData = Object.assign({}, validBjsnData, {type: 'dynamic'});
-      const dynamicJsonData = shaka.util.StringUtils.toUTF8(JSON.stringify(dynamicBjsnData));
+      const dynamicBjsnData = Object.assign({}, validBjsnData, {
+        type: 'dynamic',
+      });
+      const dynamicJsonData = shaka.util.StringUtils.toUTF8(
+          JSON.stringify(dynamicBjsnData));
       const dynamicSegment = new Uint8Array(32 + dynamicJsonData.length);
       dynamicSegment.set([
         // ftyp box
@@ -253,9 +259,9 @@ describe('BjsnManifestParser', () => {
       networkingEngine.setResponseValue(testUri, invalidSegment.buffer);
 
       await expectAsync(
-        parser.start(testUri, playerInterface)
+          parser.start(testUri, playerInterface),
       ).toBeRejectedWithError(shaka.util.Error, jasmine.objectContaining({
-        category: shaka.util.Error.Category.MANIFEST
+        category: shaka.util.Error.Category.MANIFEST,
       }));
     });
 
@@ -269,9 +275,9 @@ describe('BjsnManifestParser', () => {
           shaka.util.Error.Code.HTTP_ERROR));
 
       await expectAsync(
-        parser.start(testUri, playerInterface)
+          parser.start(testUri, playerInterface),
       ).toBeRejectedWithError(shaka.util.Error, jasmine.objectContaining({
-        category: shaka.util.Error.Category.NETWORK
+        category: shaka.util.Error.Category.NETWORK,
       }));
     });
 
@@ -296,11 +302,13 @@ describe('BjsnManifestParser', () => {
         const testCase = testCases[i];
         networkingEngine.setResponseValue(testCase.uri, validBjsnSegment.buffer);
 
+        /* eslint-disable no-await-in-loop */
         await parser.start(testCase.uri, playerInterface);
         expect(parser.baseUrl_).toBe(testCase.expectedBase);
 
         // Reset for next test
         await parser.stop();
+        /* eslint-enable no-await-in-loop */
         parser = new shaka.media.BjsnManifestParser();
         parser.configure(config);
       }
@@ -350,7 +358,8 @@ describe('BjsnManifestParser', () => {
       await parser.start(testUri, playerInterface);
 
       // Test generateSegmentUrl_ method
-      const templatePath = 'media-$' + '{num}.mp4';
+      // eslint-disable-next-line no-template-curly-in-string
+      const templatePath = 'media-${num}.mp4';
       const url1 = parser.generateSegmentUrl_(templatePath, 11);
       const url2 = parser.generateSegmentUrl_(templatePath, 12);
 
@@ -363,7 +372,8 @@ describe('BjsnManifestParser', () => {
 
       // Create BJSN data with different template
       const customBjsnData = Object.assign({}, validBjsnData, {
-        template_path: 'segment_$' + '{num}.m4s',
+        // eslint-disable-next-line no-template-curly-in-string
+        template_path: 'segment_${num}.m4s',
       });
 
       const jsonData = shaka.util.StringUtils.toUTF8(JSON.stringify(customBjsnData));
@@ -388,7 +398,8 @@ describe('BjsnManifestParser', () => {
 
       await parser.start(testUri, playerInterface);
 
-      const url = parser.generateSegmentUrl_('segment_$' + '{num}.m4s', 15);
+      // eslint-disable-next-line no-template-curly-in-string
+      const url = parser.generateSegmentUrl_('segment_${num}.m4s', 15);
       expect(url).toBe('http://example.com/stream/segment-15.m4s');
     });
   });
@@ -525,7 +536,7 @@ describe('BjsnManifestParser', () => {
       networkingEngine.setResponseValue(testUri, invalidSegment.buffer);
 
       await expectAsync(
-        parser.start(testUri, playerInterface)
+          parser.start(testUri, playerInterface),
       ).toBeRejectedWithError(shaka.util.Error);
     });
 
@@ -535,7 +546,7 @@ describe('BjsnManifestParser', () => {
       networkingEngine.setResponseValue(testUri, new ArrayBuffer(0));
 
       await expectAsync(
-        parser.start(testUri, playerInterface)
+          parser.start(testUri, playerInterface),
       ).toBeRejectedWithError(shaka.util.Error);
     });
 
@@ -551,10 +562,10 @@ describe('BjsnManifestParser', () => {
       await parser.stop();
 
       await expectAsync(startPromise).toBeRejectedWithError(
-        shaka.util.Error,
-        jasmine.objectContaining({
-          code: shaka.util.Error.Code.OPERATION_ABORTED
-        })
+          shaka.util.Error,
+          jasmine.objectContaining({
+            code: shaka.util.Error.Code.OPERATION_ABORTED,
+          }),
       );
     });
   });
