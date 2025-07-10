@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BJSN Asset Test Player</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .input-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 6px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #555;
+        }
+        
+        input[type="url"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        
+        input[type="url"]:focus {
+            outline: none;
+            border-color: #4CAF50;
+        }
+        
+        .button-group {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+        }
+        
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #45a049;
+        }
+        
+        .btn-secondary {
+            background: #2196F3;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #1976D2;
+        }
+        
+        .btn-danger {
+            background: #f44336;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #d32f2f;
+        }
+        
+        .video-container {
+            margin: 30px 0;
+            text-align: center;
+        }
+        
+        video {
+            width: 100%;
+            max-width: 800px;
+            height: auto;
+            border-radius: 6px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        
+        .status-section {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f0f8ff;
+            border-radius: 6px;
+            border-left: 4px solid #2196F3;
+        }
+        
+        .status-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .status-content {
+            background: #fff;
+            padding: 15px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            font-family: monospace;
+            font-size: 14px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .error {
+            color: #f44336;
+            background: #ffebee;
+            border-left-color: #f44336;
+        }
+        
+        .success {
+            color: #4CAF50;
+            background: #e8f5e8;
+            border-left-color: #4CAF50;
+        }
+        
+        .preset-urls {
+            margin-top: 20px;
+        }
+        
+        .preset-url {
+            display: block;
+            margin: 5px 0;
+            padding: 8px;
+            background: #e3f2fd;
+            border-radius: 4px;
+            text-decoration: none;
+            color: #1976D2;
+            font-size: 14px;
+        }
+        
+        .preset-url:hover {
+            background: #bbdefb;
+        }
+        
+        .config-section {
+            margin-top: 20px;
+            padding: 15px;
+            background: #fafafa;
+            border-radius: 4px;
+        }
+        
+        .checkbox-group {
+            margin: 10px 0;
+        }
+        
+        .checkbox-group input[type="checkbox"] {
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 BJSN Asset Test Player</h1>
+        
+        <div class="input-section">
+            <label for="assetUrl">BJSN Asset URL:</label>
+            <input type="url" id="assetUrl" placeholder="https://example.com/stream/media-first.mp4">
+            
+            <div class="config-section">
+                <div class="checkbox-group">
+                    <input type="checkbox" id="enableBjsn" checked>
+                    <label for="enableBjsn">Enable BJSN Parser</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="debugLogging">
+                    <label for="debugLogging">Enable Debug Logging</label>
+                </div>
+            </div>
+            
+            <div class="button-group">
+                <button class="btn-primary" onclick="loadAsset()">Load Asset</button>
+                <button class="btn-secondary" onclick="testBjsnParser()">Test BJSN Parser</button>
+                <button class="btn-danger" onclick="clearPlayer()">Clear Player</button>
+            </div>
+            
+            <div class="preset-urls">
+                <strong>Sample URLs (for testing):</strong>
+                <a href="#" class="preset-url" onclick="setUrl('https://example.com/stream/media-first.mp4')">
+                    Sample BJSN Stream
+                </a>
+                <a href="#" class="preset-url" onclick="setUrl('https://storage.googleapis.com/shaka-demo-assets/angel-one/dash.mpd')">
+                    Standard DASH Stream (for comparison)
+                </a>
+            </div>
+        </div>
+        
+        <div class="video-container">
+            <video id="video" controls autoplay muted>
+                Your browser does not support the video tag.
+            </video>
+        </div>
+        
+        <div class="status-section" id="statusSection">
+            <div class="status-title">Player Status:</div>
+            <div class="status-content" id="statusContent">
+                Ready to load BJSN assets...
+            </div>
+        </div>
+    </div>
+
+    <!-- Include Shaka Player -->
+    <script src="dist/shaka-player.compiled.js"></script>
+    
+    <script>
+        // Global variables
+        let player;
+        let video;
+        
+        // Initialize the application
+        async function initApp() {
+            // Install built-in polyfills
+            shaka.polyfill.installAll();
+            
+            // Check for browser support
+            if (shaka.Player.isBrowserSupported()) {
+                await initPlayer();
+                logStatus('✅ Shaka Player initialized successfully');
+            } else {
+                logStatus('❌ Browser not supported', 'error');
+                return;
+            }
+        }
+        
+        // Initialize the player
+        async function initPlayer() {
+            video = document.getElementById('video');
+            player = new shaka.Player(video);
+            
+            // Configure BJSN support
+            player.configure({
+                manifest: {
+                    bjsn: {
+                        enabled: true,
+                        options: {
+                            debugLogging: false
+                        }
+                    }
+                }
+            });
+            
+            // Set up event listeners
+            player.addEventListener('error', onPlayerError);
+            player.addEventListener('loading', () => logStatus('📡 Loading asset...'));
+            player.addEventListener('loaded', () => logStatus('✅ Asset loaded successfully', 'success'));
+            player.addEventListener('streaming', () => logStatus('🎬 Streaming started', 'success'));
+            
+            // Attach player to window for debugging
+            window.player = player;
+            window.video = video;
+        }
+        
+        // Load an asset
+        async function loadAsset() {
+            const assetUrl = document.getElementById('assetUrl').value.trim();
+            
+            if (!assetUrl) {
+                logStatus('❌ Please enter an asset URL', 'error');
+                return;
+            }
+            
+            try {
+                logStatus(`📡 Loading asset: ${assetUrl}`);
+                
+                // Update configuration based on checkboxes
+                const enableBjsn = document.getElementById('enableBjsn').checked;
+                const debugLogging = document.getElementById('debugLogging').checked;
+                
+                player.configure({
+                    manifest: {
+                        bjsn: {
+                            enabled: enableBjsn,
+                            options: {
+                                debugLogging: debugLogging
+                            }
+                        }
+                    }
+                });
+                
+                logStatus(`⚙️ BJSN Parser: ${enableBjsn ? 'Enabled' : 'Disabled'}`);
+                
+                // Load the asset
+                await player.load(assetUrl);
+                
+                logStatus('✅ Asset loaded successfully!', 'success');
+                logStatus(`📹 Video duration: ${video.duration.toFixed(2)}s`, 'success');
+                
+                // Get manifest info
+                const manifest = player.getManifest();
+                if (manifest) {
+                    logStatus(`📊 Manifest type: ${manifest.type || 'Unknown'}`);
+                    logStatus(`📊 Variants: ${manifest.variants ? manifest.variants.length : 0}`);
+                    
+                    // Check if this is a BJSN manifest
+                    if (manifest.type === 'BJSN') {
+                        logStatus('🎯 BJSN manifest detected!', 'success');
+                        displayBjsnInfo(manifest);
+                    }
+                }
+                
+            } catch (error) {
+                logStatus(`❌ Error loading asset: ${error.message}`, 'error');
+                console.error('Load error:', error);
+            }
+        }
+        
+        // Test BJSN parser directly
+        async function testBjsnParser() {
+            const assetUrl = document.getElementById('assetUrl').value.trim();
+            
+            if (!assetUrl) {
+                logStatus('❌ Please enter an asset URL to test', 'error');
+                return;
+            }
+            
+            try {
+                logStatus(`🧪 Testing BJSN parser on: ${assetUrl}`);
+                
+                // Fetch the asset
+                const response = await fetch(assetUrl);
+                const arrayBuffer = await response.arrayBuffer();
+                const data = new Uint8Array(arrayBuffer);
+                
+                // Test BJSN parser
+                if (typeof shaka !== 'undefined' && shaka.util && shaka.util.BjsnParser) {
+                    const bjsnData = shaka.util.BjsnParser.parseFromSegment(data);
+                    
+                    if (bjsnData) {
+                        logStatus('✅ BJSN data found!', 'success');
+                        logStatus(`📊 BJSN Type: ${bjsnData.type}`);
+                        logStatus(`📊 Gear Count: ${bjsnData.gear_num}`);
+                        logStatus(`📊 Sequence: ${bjsnData.seq_num}`);
+                        logStatus(`📊 Template: ${bjsnData.template_path}`);
+                        
+                        // Display gear information
+                        if (bjsnData.gear_list && bjsnData.gear_list.length > 0) {
+                            logStatus('🔧 Available gears:');
+                            bjsnData.gear_list.forEach((gear, index) => {
+                                const gearName = Object.keys(gear)[0];
+                                const gearData = gear[gearName];
+                                logStatus(`  ${index + 1}. ${gearName}: ${gearData.realtime_bitrate}bps`);
+                            });
+                        }
+                    } else {
+                        logStatus('⚠️ No BJSN data found in this segment', 'error');
+                    }
+                } else {
+                    logStatus('❌ BJSN Parser not available', 'error');
+                }
+                
+            } catch (error) {
+                logStatus(`❌ Error testing BJSN parser: ${error.message}`, 'error');
+                console.error('Test error:', error);
+            }
+        }
+        
+        // Clear the player
+        async function clearPlayer() {
+            if (player) {
+                await player.unload();
+                logStatus('🧹 Player cleared');
+            }
+        }
+        
+        // Set URL from preset
+        function setUrl(url) {
+            document.getElementById('assetUrl').value = url;
+        }
+        
+        // Display BJSN-specific information
+        function displayBjsnInfo(manifest) {
+            logStatus('🎯 BJSN Manifest Details:', 'success');
+            
+            if (manifest.variants && manifest.variants.length > 0) {
+                const variant = manifest.variants[0];
+                logStatus(`📊 Bandwidth: ${variant.bandwidth}bps`);
+                
+                if (variant.video) {
+                    logStatus(`📹 Video: ${variant.video.width}x${variant.video.height} @ ${variant.video.frameRate}fps`);
+                    logStatus(`📹 Video Codec: ${variant.video.codecs}`);
+                }
+                
+                if (variant.audio) {
+                    logStatus(`🔊 Audio: ${variant.audio.channelsCount} channels @ ${variant.audio.audioSamplingRate}Hz`);
+                    logStatus(`🔊 Audio Codec: ${variant.audio.codecs}`);
+                }
+            }
+        }
+        
+        // Log status messages
+        function logStatus(message, type = 'info') {
+            const statusContent = document.getElementById('statusContent');
+            const statusSection = document.getElementById('statusSection');
+            const timestamp = new Date().toLocaleTimeString();
+            
+            // Add message to log
+            const logEntry = `[${timestamp}] ${message}`;
+            statusContent.innerHTML += logEntry + '<br>';
+            
+            // Auto-scroll to bottom
+            statusContent.scrollTop = statusContent.scrollHeight;
+            
+            // Update section styling based on type
+            statusSection.className = `status-section ${type}`;
+            
+            // Also log to console for debugging
+            console.log(logEntry);
+        }
+        
+        // Handle player errors
+        function onPlayerError(error) {
+            logStatus(`❌ Player Error: ${error.detail.message}`, 'error');
+            console.error('Player error:', error.detail);
+        }
+        
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', initApp);
+    </script>
+</body>
+</html>
