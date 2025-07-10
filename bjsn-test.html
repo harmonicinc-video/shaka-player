@@ -231,8 +231,14 @@
         </div>
     </div>
 
-    <!-- Include Shaka Player -->
-    <script src="dist/shaka-player.compiled.js"></script>
+    <!-- Include Shaka Player (uncompiled for debugging) -->
+    <!-- Polyfills before anything else -->
+    <script src="node_modules/es6-promise-polyfill/promise.js"></script>
+    <script src="node_modules/@babel/polyfill/dist/polyfill.js"></script>
+    
+    <script src="node_modules/google-closure-library/closure/goog/base.js"></script>
+    <script src="dist/deps.js"></script>
+    <script src="shaka-player.uncompiled.js"></script>
     
     <script>
         // Global variables

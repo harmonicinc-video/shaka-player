@@ -13,7 +13,7 @@ import sys
 os.chdir('/Users/elvisfan/development/agentCode/shaka-player')
 
 # Set up the server
-PORT = 8080
+PORT = 8082
 Handler = http.server.SimpleHTTPRequestHandler
 
 # Add CORS headers for testing

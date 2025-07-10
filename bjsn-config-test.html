@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>BJSN Configuration Test</title>
+</head>
+<body>
+    <h1>BJSN Configuration Test</h1>
+    <div id="status">Loading...</div>
+    <div id="details"></div>
+
+    <!-- Polyfills -->
+    <script src="node_modules/es6-promise-polyfill/promise.js"></script>
+    <script src="node_modules/@babel/polyfill/dist/polyfill.js"></script>
+    
+    <!-- Shaka Player -->
+    <script src="node_modules/google-closure-library/closure/goog/base.js"></script>
+    <script src="dist/deps.js"></script>
+    <script src="shaka-player.uncompiled.js"></script>
+    
+    <script>
+        function log(message) {
+            console.log(message);
+            document.getElementById('details').innerHTML += message + '<br>';
+        }
+        
+        async function testBjsnConfig() {
+            try {
+                log('Starting BJSN configuration test...');
+                
+                // Install polyfills
+                shaka.polyfill.installAll();
+                log('✅ Polyfills installed');
+                
+                // Check if Shaka Player is available
+                if (typeof shaka === 'undefined') {
+                    throw new Error('Shaka Player not available');
+                }
+                log('✅ Shaka Player available');
+                
+                // Create a mock video element
+                const video = document.createElement('video');
+                document.body.appendChild(video);
+                
+                // Create player
+                const player = new shaka.Player(video);
+                log('✅ Player created');
+                
+                // Test BJSN configuration
+                const config = {
+                    manifest: {
+                        bjsn: {
+                            enabled: true,
+                            options: {
+                                debugLogging: true
+                            }
+                        }
+                    }
+                };
+                
+                log('Attempting to configure BJSN...');
+                player.configure(config);
+                log('✅ BJSN configuration successful!');
+                
+                // Get the configuration back to verify
+                const currentConfig = player.getConfiguration();
+                log('Current BJSN config: ' + JSON.stringify(currentConfig.manifest.bjsn, null, 2));
+                
+                // Test BJSN parser availability
+                if (typeof shaka.util.BjsnParser !== 'undefined') {
+                    log('✅ BJSN Parser available');
+                } else {
+                    log('❌ BJSN Parser not available');
+                }
+                
+                // Test BJSN manifest parser availability
+                if (typeof shaka.media.BjsnManifestParser !== 'undefined') {
+                    log('✅ BJSN Manifest Parser available');
+                } else {
+                    log('❌ BJSN Manifest Parser not available');
+                }
+                
+                document.getElementById('status').textContent = 'Test completed successfully!';
+                document.getElementById('status').style.color = 'green';
+                
+            } catch (error) {
+                log('❌ Error: ' + error.message);
+                document.getElementById('status').textContent = 'Test failed: ' + error.message;
+                document.getElementById('status').style.color = 'red';
+            }
+        }
+        
+        // Run test when page loads
+        window.addEventListener('load', testBjsnConfig);
+    </script>
+</body>
+</html>
