@@ -137,3 +137,5 @@ goog.require('shaka.util.Dom');
 goog.require('shaka.util.Error');
 goog.require('shaka.util.FairPlayUtils');
 goog.require('shaka.util.Iterables');
+goog.require('shaka.util.BjsnParser');
+goog.require('shaka.media.BjsnManifestParser');

@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BJSN Live Streaming Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 6px;
+            border-left: 4px solid #2196F3;
+        }
+        
+        .section h3 {
+            margin-top: 0;
+            color: #1976D2;
+        }
+        
+        .video-container {
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        video {
+            width: 100%;
+            max-width: 800px;
+            height: auto;
+            border-radius: 6px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .input-group {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        label {
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        
+        input, select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .button-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 20px 0;
+        }
+        
+        button {
+            padding: 12px;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: bold;
+        }
+        
+        .btn-primary { background: #2196F3; color: white; }
+        .btn-primary:hover { background: #1976D2; }
+        .btn-success { background: #4CAF50; color: white; }
+        .btn-success:hover { background: #45a049; }
+        .btn-warning { background: #FF9800; color: white; }
+        .btn-warning:hover { background: #F57C00; }
+        .btn-danger { background: #f44336; color: white; }
+        .btn-danger:hover { background: #d32f2f; }
+        
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .status-card {
+            padding: 15px;
+            background: white;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            text-align: center;
+        }
+        
+        .status-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2196F3;
+            margin-bottom: 5px;
+        }
+        
+        .status-label {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .log-container {
+            background: white;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 15px;
+        }
+        
+        .log-entry {
+            margin: 5px 0;
+            padding: 8px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 13px;
+        }
+        
+        .log-info { background: #e3f2fd; border-left: 4px solid #2196F3; }
+        .log-success { background: #e8f5e8; border-left: 4px solid #4CAF50; }
+        .log-warning { background: #fff3e0; border-left: 4px solid #FF9800; }
+        .log-error { background: #ffebee; border-left: 4px solid #f44336; }
+        
+        .segment-timeline {
+            display: flex;
+            overflow-x: auto;
+            padding: 10px 0;
+            gap: 5px;
+        }
+        
+        .segment-block {
+            min-width: 60px;
+            height: 40px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+            flex-shrink: 0;
+        }
+        
+        .segment-available { background: #4CAF50; }
+        .segment-loading { background: #FF9800; }
+        .segment-unavailable { background: #f44336; }
+        .segment-current { background: #2196F3; border: 2px solid #fff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔴 BJSN Live Streaming Test</h1>
+        
+        <div class="section">
+            <h3>🎮 Stream Configuration</h3>
+            <div class="controls">
+                <div class="input-group">
+                    <label for="streamUrl">Stream URL:</label>
+                    <input type="url" id="streamUrl" value="http://localhost:8081/bjsn_corrected_output/segment_1.mp4">
+                </div>
+                <div class="input-group">
+                    <label for="streamType">Stream Type:</label>
+                    <select id="streamType">
+                        <option value="dynamic">Live (dynamic)</option>
+                        <option value="static">VOD (static)</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label for="updateInterval">Update Interval (seconds):</label>
+                    <input type="number" id="updateInterval" value="2" min="1" max="10">
+                </div>
+                <div class="input-group">
+                    <label for="debugLevel">Debug Level:</label>
+                    <select id="debugLevel">
+                        <option value="1">Basic</option>
+                        <option value="2">Detailed</option>
+                        <option value="3">Verbose</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h3>🎬 Video Player</h3>
+            <div class="video-container">
+                <video id="video" controls muted autoplay>
+                    Your browser does not support the video tag.
+                </video>
+            </div>
+            
+            <div class="button-grid">
+                <button class="btn-success" onclick="loadStream()">Load Stream</button>
+                <button class="btn-primary" onclick="testPeriodicUpdates()">Test Updates</button>
+                <button class="btn-warning" onclick="simulateLive()">Simulate Live</button>
+                <button class="btn-danger" onclick="stopStream()">Stop Stream</button>
+                <button class="btn-primary" onclick="clearLogs()">Clear Logs</button>
+                <button class="btn-primary" onclick="exportLogs()">Export Logs</button>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h3>📊 Live Status</h3>
+            <div class="status-grid">
+                <div class="status-card">
+                    <div class="status-value" id="manifestUpdates">0</div>
+                    <div class="status-label">Manifest Updates</div>
+                </div>
+                <div class="status-card">
+                    <div class="status-value" id="segmentsDiscovered">0</div>
+                    <div class="status-label">Segments Discovered</div>
+                </div>
+                <div class="status-card">
+                    <div class="status-value" id="lastSequence">-</div>
+                    <div class="status-label">Last Sequence</div>
+                </div>
+                <div class="status-card">
+                    <div class="status-value" id="bufferHealth">0%</div>
+                    <div class="status-label">Buffer Health</div>
+                </div>
+                <div class="status-card">
+                    <div class="status-value" id="liveEdge">-</div>
+                    <div class="status-label">Live Edge (s)</div>
+                </div>
+                <div class="status-card">
+                    <div class="status-value" id="updateFreq">-</div>
+                    <div class="status-label">Update Frequency</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h3>📈 Segment Timeline</h3>
+            <div class="segment-timeline" id="segmentTimeline">
+                <!-- Segments will be populated here -->
+            </div>
+        </div>
+        
+        <div class="section">
+            <h3>📝 Live Logs</h3>
+            <div class="log-container" id="logContainer">
+                <!-- Live logs will appear here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Include Shaka Player -->
+    <script src="node_modules/google-closure-library/closure/goog/base.js"></script>
+    <script src="dist/deps.js"></script>
+    <script src="shaka-player.uncompiled.js"></script>
+    
+    <script>
+        // Global variables
+        let player;
+        let video;
+        let updateStats = {
+            manifestUpdates: 0,
+            segmentsDiscovered: 0,
+            lastSequence: null,
+            updateTimes: [],
+            segments: new Map()
+        };
+        
+        let simulationTimer = null;
+        let simulationSequence = 1;
+        
+        // Initialize the application
+        async function initApp() {
+            try {
+                // Install polyfills
+                shaka.polyfill.installAll();
+                
+                if (shaka.Player.isBrowserSupported()) {
+                    await initPlayer();
+                    log('✅ Shaka Player initialized successfully', 'success');
+                } else {
+                    log('❌ Browser not supported', 'error');
+                    return;
+                }
+            } catch (error) {
+                log('❌ Initialization failed: ' + error.message, 'error');
+            }
+        }
+        
+        // Initialize the player
+        async function initPlayer() {
+            video = document.getElementById('video');
+            player = new shaka.Player(video);
+            
+            // Configure for BJSN with detailed logging
+            const debugLevel = parseInt(document.getElementById('debugLevel').value);
+            
+            player.configure({
+                manifest: {
+                    bjsn: {
+                        enabled: true,
+                        options: {
+                            debugLogging: debugLevel >= 2
+                        }
+                    }
+                },
+                streaming: {
+                    updateIntervalSeconds: parseInt(document.getElementById('updateInterval').value),
+                    rebufferingGoal: 6,
+                    bufferingGoal: 12
+                }
+            });
+            
+            // Set up enhanced event listeners
+            player.addEventListener('error', onPlayerError);
+            player.addEventListener('loading', () => updateLog('📡 Loading stream...', 'info'));
+            player.addEventListener('loaded', onStreamLoaded);
+            player.addEventListener('streaming', () => updateLog('🎬 Streaming started', 'success'));
+            player.addEventListener('buffering', (e) => updateLog(`⏳ Buffering: ${e.buffering}`, 'info'));
+            
+            // Monitor buffer health
+            setInterval(updateBufferHealth, 1000);
+            
+            // Attach to window for debugging
+            window.player = player;
+            window.video = video;
+        }
+        
+        // Load stream
+        async function loadStream() {
+            const streamUrl = document.getElementById('streamUrl').value;
+            const streamType = document.getElementById('streamType').value;
+            const updateInterval = parseInt(document.getElementById('updateInterval').value);
+            
+            if (!streamUrl) {
+                log('❌ Please enter a stream URL', 'error');
+                return;
+            }
+            
+            try {
+                log(`🔄 Loading ${streamType} stream: ${streamUrl}`, 'info');
+                
+                // Update configuration
+                player.configure({
+                    streaming: {
+                        updateIntervalSeconds: updateInterval
+                    }
+                });
+                
+                // Reset stats
+                resetStats();
+                
+                // Load the stream
+                await player.load(streamUrl);
+                
+                log('✅ Stream loaded successfully!', 'success');
+                
+            } catch (error) {
+                log(`❌ Failed to load stream: ${error.message}`, 'error');
+            }
+        }
+        
+        // Test periodic updates manually
+        async function testPeriodicUpdates() {
+            if (!player || !player.isLoaded()) {
+                log('❌ Please load a stream first', 'error');
+                return;
+            }
+            
+            log('🔍 Testing periodic update mechanism...', 'info');
+            
+            // Get the manifest parser
+            const manifest = player.getManifest();
+            if (!manifest) {
+                log('❌ No manifest available', 'error');
+                return;
+            }
+            
+            log('📊 Manifest type: ' + (manifest.type || 'Unknown'), 'info');
+            
+            // Trigger manual update if BJSN
+            if (manifest.type === 'BJSN') {
+                log('🔄 Triggering BJSN manifest update...', 'info');
+                
+                // Access the parser through player internals (for testing)
+                if (player.parser_ && player.parser_.update) {
+                    player.parser_.update();
+                    log('✅ Manual update triggered', 'success');
+                    updateStats.manifestUpdates++;
+                    updateStatsDisplay();
+                } else {
+                    log('⚠️ Parser update method not available', 'warning');
+                }
+            } else {
+                log('⚠️ Not a BJSN stream, cannot test BJSN updates', 'warning');
+            }
+        }
+        
+        // Simulate live stream by adding segments
+        function simulateLive() {
+            if (simulationTimer) {
+                clearInterval(simulationTimer);
+                simulationTimer = null;
+                log('🛑 Live simulation stopped', 'info');
+                return;
+            }
+            
+            log('🔴 Starting live stream simulation...', 'info');
+            simulationSequence = 1;
+            
+            simulationTimer = setInterval(() => {
+                simulationSequence++;
+                updateStats.segmentsDiscovered++;
+                updateStats.lastSequence = simulationSequence;
+                
+                // Simulate segment discovery
+                updateStats.segments.set(simulationSequence, {
+                    status: 'available',
+                    timestamp: Date.now()
+                });
+                
+                log(`🆕 Simulated new segment: ${simulationSequence}`, 'success');
+                
+                updateStatsDisplay();
+                updateSegmentTimeline();
+                
+            }, parseInt(document.getElementById('updateInterval').value) * 1000);
+        }
+        
+        // Stop stream
+        async function stopStream() {
+            if (simulationTimer) {
+                clearInterval(simulationTimer);
+                simulationTimer = null;
+            }
+            
+            if (player) {
+                await player.unload();
+                log('🛑 Stream stopped', 'info');
+            }
+        }
+        
+        // Event handlers
+        function onStreamLoaded() {
+            log('✅ Stream loaded successfully', 'success');
+            const manifest = player.getManifest();
+            
+            if (manifest) {
+                log(`📊 Manifest type: ${manifest.type}`, 'info');
+                log(`📊 Variants: ${manifest.variants ? manifest.variants.length : 0}`, 'info');
+                log(`📊 Duration: ${video.duration ? video.duration.toFixed(2) + 's' : 'Live'}`, 'info');
+                
+                if (manifest.type === 'BJSN') {
+                    log('🎯 BJSN manifest detected - periodic updates enabled', 'success');
+                    
+                    // Check if parser has update timer
+                    if (player.parser_ && player.parser_.updateTimer_) {
+                        log('⏱️ BJSN periodic update timer is active', 'success');
+                    } else {
+                        log('⚠️ BJSN periodic update timer not detected', 'warning');
+                    }
+                }
+                
+                updateStatsDisplay();
+            }
+        }
+        
+        function onPlayerError(error) {
+            log(`❌ Player Error: ${error.detail.message}`, 'error');
+        }
+        
+        // Update buffer health
+        function updateBufferHealth() {
+            if (!video || !video.duration) return;
+            
+            try {
+                const currentTime = video.currentTime;
+                const buffered = video.buffered;
+                
+                if (buffered.length > 0) {
+                    const bufferEnd = buffered.end(buffered.length - 1);
+                    const bufferAhead = bufferEnd - currentTime;
+                    const bufferPercentage = Math.min(100, (bufferAhead / 10) * 100); // Assume 10s is 100%
+                    
+                    document.getElementById('bufferHealth').textContent = Math.round(bufferPercentage) + '%';
+                    
+                    if (video.duration && !isNaN(video.duration) && video.duration !== Infinity) {
+                        const liveEdge = video.duration - currentTime;
+                        document.getElementById('liveEdge').textContent = liveEdge.toFixed(1);
+                    }
+                }
+            } catch (e) {
+                // Ignore errors
+            }
+        }
+        
+        // Update stats display
+        function updateStatsDisplay() {
+            document.getElementById('manifestUpdates').textContent = updateStats.manifestUpdates;
+            document.getElementById('segmentsDiscovered').textContent = updateStats.segmentsDiscovered;
+            document.getElementById('lastSequence').textContent = updateStats.lastSequence || '-';
+            
+            // Calculate update frequency
+            if (updateStats.updateTimes.length > 1) {
+                const recentUpdates = updateStats.updateTimes.slice(-5);
+                const avgInterval = recentUpdates.reduce((sum, time, i) => {
+                    if (i === 0) return sum;
+                    return sum + (time - recentUpdates[i-1]);
+                }, 0) / (recentUpdates.length - 1);
+                
+                document.getElementById('updateFreq').textContent = (avgInterval / 1000).toFixed(1) + 's';
+            }
+        }
+        
+        // Update segment timeline visualization
+        function updateSegmentTimeline() {
+            const timeline = document.getElementById('segmentTimeline');
+            timeline.innerHTML = '';
+            
+            const segments = Array.from(updateStats.segments.entries()).slice(-20); // Show last 20
+            
+            for (const [seq, data] of segments) {
+                const block = document.createElement('div');
+                block.className = `segment-block segment-${data.status}`;
+                block.textContent = seq;
+                block.title = `Segment ${seq} - ${data.status} at ${new Date(data.timestamp).toLocaleTimeString()}`;
+                timeline.appendChild(block);
+            }
+        }
+        
+        // Reset stats
+        function resetStats() {
+            updateStats = {
+                manifestUpdates: 0,
+                segmentsDiscovered: 0,
+                lastSequence: null,
+                updateTimes: [],
+                segments: new Map()
+            };
+            updateStatsDisplay();
+            updateSegmentTimeline();
+        }
+        
+        // Logging functions
+        function log(message, type = 'info') {
+            updateLog(message, type);
+            console.log(`[${new Date().toLocaleTimeString()}] ${message}`);
+        }
+        
+        function updateLog(message, type) {
+            const logContainer = document.getElementById('logContainer');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            entry.textContent = `[${timestamp}] ${message}`;
+            
+            logContainer.insertBefore(entry, logContainer.firstChild);
+            
+            // Keep only last 100 entries
+            while (logContainer.children.length > 100) {
+                logContainer.removeChild(logContainer.lastChild);
+            }
+        }
+        
+        function clearLogs() {
+            document.getElementById('logContainer').innerHTML = '';
+            resetStats();
+        }
+        
+        function exportLogs() {
+            const logs = Array.from(document.getElementById('logContainer').children)
+                .map(entry => entry.textContent)
+                .reverse()
+                .join('\n');
+                
+            const blob = new Blob([logs], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `bjsn-test-logs-${new Date().toISOString().slice(0,10)}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+        
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', initApp);
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            if (simulationTimer) {
+                clearInterval(simulationTimer);
+            }
+        });
+    </script>
+</body>
+</html>

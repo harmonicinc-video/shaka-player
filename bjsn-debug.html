@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BJSN Debug Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .status {
+            background: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .error {
+            background: #ffebee;
+            color: #c62828;
+        }
+        .success {
+            background: #e8f5e8;
+            color: #2e7d32;
+        }
+        pre {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>BJSN Debug Test</h1>
+    <button onclick="testBjsnParser()">Test BJSN Parser</button>
+    <button onclick="testSegmentGeneration()">Test Segment Generation</button>
+    <button onclick="clearResults()">Clear Results</button>
+    
+    <div id="results"></div>
+
+    <script>
+        async function testBjsnParser() {
+            addResult('Testing BJSN Parser...', 'status');
+            
+            try {
+                const response = await fetch('http://localhost:8081/bjsn_corrected_output/segment_1.mp4');
+                const arrayBuffer = await response.arrayBuffer();
+                const data = new Uint8Array(arrayBuffer);
+                
+                // Simple BJSN box parser
+                const bjsnData = extractBjsnData(data);
+                
+                if (bjsnData) {
+                    addResult('✅ BJSN data extracted successfully', 'success');
+                    addResult('BJSN Data:', 'status');
+                    addResult(JSON.stringify(bjsnData, null, 2), 'status');
+                } else {
+                    addResult('❌ No BJSN data found', 'error');
+                }
+            } catch (error) {
+                addResult('❌ Error: ' + error.message, 'error');
+            }
+        }
+        
+        async function testSegmentGeneration() {
+            addResult('Testing Segment Generation...', 'status');
+            
+            try {
+                const response = await fetch('http://localhost:8081/bjsn_corrected_output/segment_1.mp4');
+                const arrayBuffer = await response.arrayBuffer();
+                const data = new Uint8Array(arrayBuffer);
+                
+                const bjsnData = extractBjsnData(data);
+                
+                if (bjsnData) {
+                    addResult('✅ BJSN data extracted', 'success');
+                    
+                    // Test segment URL generation
+                    const baseUrl = 'http://localhost:8081/bjsn_corrected_output/';
+                    const templatePath = bjsnData.template_path;
+                    const startSeqNum = bjsnData.seq_num;
+                    
+                    addResult('Template path: ' + templatePath, 'status');
+                    addResult('Starting sequence: ' + startSeqNum, 'status');
+                    
+                    // Generate URLs for available segments
+                    const segmentUrls = [];
+                    for (let i = 0; i < 8; i++) {
+                        const seqNum = startSeqNum + i;
+                        const fileName = templatePath.replace('${num}', seqNum.toString());
+                        const url = baseUrl + fileName;
+                        segmentUrls.push(url);
+                    }
+                    
+                    addResult('Generated segment URLs:', 'status');
+                    addResult(segmentUrls.join('\n'), 'status');
+                    
+                    // Test availability
+                    let availableCount = 0;
+                    for (const url of segmentUrls) {
+                        try {
+                            const testResponse = await fetch(url, { method: 'HEAD' });
+                            if (testResponse.ok) {
+                                availableCount++;
+                            }
+                        } catch (e) {
+                            // Ignore errors
+                        }
+                    }
+                    
+                    addResult(`✅ ${availableCount} segments available out of ${segmentUrls.length}`, 'success');
+                    
+                } else {
+                    addResult('❌ No BJSN data found', 'error');
+                }
+            } catch (error) {
+                addResult('❌ Error: ' + error.message, 'error');
+            }
+        }
+        
+        function extractBjsnData(data) {
+            // Simple BJSN box parser
+            let i = 0;
+            while (i < data.length - 8) {
+                // Read box size (4 bytes, big-endian)
+                const boxSize = (data[i] << 24) | (data[i+1] << 16) | (data[i+2] << 8) | data[i+3];
+                if (boxSize === 0 || boxSize < 8) break;
+                if (boxSize === 1) {
+                    i += 16;
+                    continue;
+                }
+                
+                // Read box type (4 bytes)
+                const boxType = String.fromCharCode(data[i+4], data[i+5], data[i+6], data[i+7]);
+                
+                if (boxType === 'bjsn') {
+                    // Found BJSN box, extract payload
+                    const payloadStart = i + 8;
+                    const payloadEnd = i + boxSize;
+                    if (payloadEnd > data.length) break;
+                    
+                    const payload = data.slice(payloadStart, payloadEnd);
+                    try {
+                        const jsonString = new TextDecoder().decode(payload);
+                        return JSON.parse(jsonString);
+                    } catch (e) {
+                        return null;
+                    }
+                }
+                
+                i += boxSize;
+            }
+            return null;
+        }
+        
+        function addResult(message, type) {
+            const results = document.getElementById('results');
+            const div = document.createElement('div');
+            div.className = 'status ' + type;
+            div.innerHTML = message.includes('\n') ? '<pre>' + message + '</pre>' : message;
+            results.appendChild(div);
+        }
+        
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+        }
+    </script>
+</body>
+</html>
