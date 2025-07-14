@@ -1,5 +1,10 @@
 # BJSN (Bytedance JSON) manifest parser for TikTok CMAF streams.
-# Phase 1: Single-gear, configuration-based parser selection
+# Phase 1: Single-gear, configuration-based parser selection with codec detection
 
+# Core BJSN utilities
 +../../lib/util/bjsn_parser.js
++../../lib/util/bjsn_box_stripper.js
++../../lib/util/bjsn_codec_detector.js
+
+# BJSN manifest parser with codec detection and MP4 timestamp support
 +../../lib/media/bjsn_manifest_parser.js

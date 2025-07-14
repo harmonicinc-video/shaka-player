@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BJSN Box Stripper Direct Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        video {
+            width: 100%;
+            max-width: 640px;
+            height: auto;
+            border-radius: 4px;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            background: #007bff;
+            color: white;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .log {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            margin-top: 20px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 BJSN Box Stripper Direct Test</h1>
+        <p>Testing the BJSN box stripping functionality directly.</p>
+        
+        <video id="video" controls muted>
+            Your browser does not support the video tag.
+        </video>
+        
+        <div class="controls">
+            <button onclick="testStripperDirect()">Test Stripper Direct</button>
+            <button onclick="testWithMSE()">Test with MSE</button>
+            <button onclick="loadBjsnStream()">Load BJSN Stream</button>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+        
+        <div id="status" class="status info">Ready for testing...</div>
+        
+        <div id="log" class="log">Direct BJSN Box Stripper Test Ready...\n</div>
+    </div>
+
+    <!-- Include Shaka Player -->
+    <script src="node_modules/google-closure-library/closure/goog/base.js"></script>
+    <script src="dist/deps.js"></script>
+    <script src="shaka-player.uncompiled.js"></script>
+    
+    <script>
+        let player;
+        let video;
+        
+        function log(message, level = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logDiv = document.getElementById('log');
+            const prefix = level === 'error' ? '❌' : level === 'warning' ? '⚠️' : level === 'success' ? '✅' : 'ℹ️';
+            logDiv.textContent += `[${timestamp}] ${prefix} ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(message);
+        }
+        
+        function setStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+        }
+        
+        function clearLog() {
+            document.getElementById('log').textContent = '';
+        }
+        
+        async function initApp() {
+            try {
+                log('Initializing test environment...');
+                
+                // Install polyfills
+                shaka.polyfill.installAll();
+                
+                if (shaka.Player.isBrowserSupported()) {
+                    await initPlayer();
+                    log('Test environment initialized successfully', 'success');
+                    setStatus('Ready - Test environment initialized', 'success');
+                } else {
+                    log('Browser not supported', 'error');
+                    setStatus('Browser not supported', 'error');
+                    return;
+                }
+                
+                // Test if BJSN utilities are available
+                if (typeof shaka.util.BjsnBoxStripper !== 'undefined') {
+                    log('✅ BJSN Box Stripper utility is available', 'success');
+                    window.BjsnBoxStripper = shaka.util.BjsnBoxStripper;
+                } else {
+                    log('❌ BJSN Box Stripper utility not found', 'error');
+                }
+                
+                if (typeof shaka.util.BjsnParser !== 'undefined') {
+                    log('✅ BJSN Parser utility is available', 'success');
+                    window.BjsnParser = shaka.util.BjsnParser;
+                } else {
+                    log('❌ BJSN Parser utility not found', 'error');
+                }
+                
+            } catch (error) {
+                log('Initialization failed: ' + error.message, 'error');
+                setStatus('Initialization failed', 'error');
+            }
+        }
+        
+        async function initPlayer() {
+            video = document.getElementById('video');
+            player = new shaka.Player(video);
+            
+            // Enable verbose logging to see BJSN stripping in action
+            shaka.log.setLevel(shaka.log.Level.INFO);
+            
+            // Set up event listeners
+            player.addEventListener('error', (error) => {
+                log('Player Error: ' + error.detail.message, 'error');
+                setStatus('Player Error: ' + error.detail.message, 'error');
+            });
+            
+            player.addEventListener('loaded', () => {
+                log('Stream loaded successfully', 'success');
+                setStatus('Stream loaded successfully', 'success');
+            });
+            
+            // Attach to window for debugging
+            window.player = player;
+            window.video = video;
+        }
+        
+        async function testStripperDirect() {
+            log('🧪 Testing BJSN Box Stripper directly...');
+            
+            try {
+                // Test with a sample URL
+                const testUrl = 'http://localhost:8081/bjsn_corrected_output/segment_1.mp4';
+                log(`📥 Fetching test segment: ${testUrl}`);
+                
+                const response = await fetch(testUrl);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const arrayBuffer = await response.arrayBuffer();
+                const uint8Array = new Uint8Array(arrayBuffer);
+                
+                log(`📏 Original segment size: ${uint8Array.length} bytes`);
+                
+                // Test BJSN detection
+                const hasBjsn = shaka.util.BjsnBoxStripper.needsStripping(uint8Array);
+                log(`🔍 BJSN box detected: ${hasBjsn}`, hasBjsn ? 'success' : 'warning');
+                
+                if (hasBjsn) {
+                    // Get BJSN info
+                    const bjsnInfo = shaka.util.BjsnBoxStripper.getBjsnBoxInfo(uint8Array);
+                    log(`📋 BJSN box info:`, 'info');
+                    log(`  - Position: ${bjsnInfo.start}`, 'info');
+                    log(`  - Size: ${bjsnInfo.size} bytes`, 'info');
+                    log(`  - Header size: ${bjsnInfo.headerSize} bytes`, 'info');
+                    log(`  - Payload size: ${bjsnInfo.payloadSize} bytes`, 'info');
+                    
+                    if (bjsnInfo.jsonData) {
+                        log(`  - Sequence number: ${bjsnInfo.jsonData.seq_num}`, 'info');
+                        log(`  - Type: ${bjsnInfo.jsonData.type}`, 'info');
+                        log(`  - Gear count: ${bjsnInfo.jsonData.gear_num}`, 'info');
+                    }
+                    
+                    // Test stripping
+                    const strippedData = shaka.util.BjsnBoxStripper.stripBjsnBox(uint8Array);
+                    log(`📏 Stripped segment size: ${strippedData.length} bytes`);
+                    log(`📊 Size reduction: ${uint8Array.length - strippedData.length} bytes`);
+                    
+                    const reductionPercentage = ((uint8Array.length - strippedData.length) / uint8Array.length * 100).toFixed(2);
+                    log(`📊 Size reduction: ${reductionPercentage}%`);
+                    
+                    log('✅ BJSN Box Stripper test completed successfully', 'success');
+                    setStatus('BJSN Box Stripper test successful', 'success');
+                } else {
+                    log('⚠️ No BJSN box found in test segment', 'warning');
+                    setStatus('No BJSN box found in test segment', 'warning');
+                }
+                
+            } catch (error) {
+                log(`❌ Stripper test failed: ${error.message}`, 'error');
+                setStatus(`Stripper test failed: ${error.message}`, 'error');
+            }
+        }
+        
+        async function testWithMSE() {
+            log('🧪 Testing BJSN stripping with MSE...');
+            
+            try {
+                // Test with a sample URL
+                const testUrl = 'http://localhost:8081/bjsn_corrected_output/segment_1.mp4';
+                log(`📥 Fetching test segment: ${testUrl}`);
+                
+                const response = await fetch(testUrl);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const arrayBuffer = await response.arrayBuffer();
+                const uint8Array = new Uint8Array(arrayBuffer);
+                
+                log(`📏 Original segment size: ${uint8Array.length} bytes`);
+                
+                // Check for BJSN box
+                const hasBjsn = shaka.util.BjsnBoxStripper.needsStripping(uint8Array);
+                log(`🔍 BJSN box detected: ${hasBjsn}`);
+                
+                if (hasBjsn) {
+                    // Strip the BJSN box
+                    const strippedData = shaka.util.BjsnBoxStripper.stripBjsnBox(uint8Array);
+                    log(`📏 Stripped segment size: ${strippedData.length} bytes`);
+                    
+                    // Test with MediaSource
+                    if (window.MediaSource) {
+                        const mediaSource = new MediaSource();
+                        const objectURL = URL.createObjectURL(mediaSource);
+                        
+                        mediaSource.addEventListener('sourceopen', () => {
+                            log('📺 MediaSource opened');
+                            
+                            try {
+                                const mimeType = 'video/mp4; codecs="avc1.640028"';
+                                if (MediaSource.isTypeSupported(mimeType)) {
+                                    log(`✅ MIME type supported: ${mimeType}`);
+                                    
+                                    const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+                                    sourceBuffer.addEventListener('updateend', () => {
+                                        log('✅ SourceBuffer update completed successfully', 'success');
+                                        setStatus('MSE test successful - stripped data was accepted', 'success');
+                                        
+                                        // Log buffered ranges
+                                        try {
+                                            const buffered = sourceBuffer.buffered;
+                                            log(`📊 Buffered ranges: ${buffered.length}`);
+                                            for (let i = 0; i < buffered.length; i++) {
+                                                log(`  Range ${i}: ${buffered.start(i)}-${buffered.end(i)}`);
+                                            }
+                                        } catch (e) {
+                                            log(`📊 Cannot read buffered ranges: ${e.message}`);
+                                        }
+                                    });
+                                    
+                                    sourceBuffer.addEventListener('error', (e) => {
+                                        log(`❌ SourceBuffer error: ${e}`, 'error');
+                                        setStatus('MSE test failed - SourceBuffer error', 'error');
+                                    });
+                                    
+                                    // Try to append the stripped data
+                                    log('📤 Attempting to append stripped data to SourceBuffer...');
+                                    sourceBuffer.appendBuffer(strippedData.buffer);
+                                    
+                                } else {
+                                    log(`❌ MIME type not supported: ${mimeType}`, 'error');
+                                }
+                            } catch (error) {
+                                log(`❌ MediaSource error: ${error.message}`, 'error');
+                                setStatus('MSE test failed', 'error');
+                            }
+                        });
+                        
+                        mediaSource.addEventListener('error', (e) => {
+                            log(`❌ MediaSource error: ${e}`, 'error');
+                            setStatus('MSE test failed - MediaSource error', 'error');
+                        });
+                        
+                        // Set video source to trigger sourceopen
+                        video.src = objectURL;
+                        
+                    } else {
+                        log('❌ MediaSource not supported', 'error');
+                        setStatus('MediaSource not supported', 'error');
+                    }
+                } else {
+                    log('⚠️ No BJSN box found in test segment', 'warning');
+                    setStatus('No BJSN box found for MSE test', 'warning');
+                }
+                
+            } catch (error) {
+                log(`❌ MSE test failed: ${error.message}`, 'error');
+                setStatus(`MSE test failed: ${error.message}`, 'error');
+            }
+        }
+        
+        async function loadBjsnStream() {
+            if (!player) {
+                log('❌ Player not initialized', 'error');
+                return;
+            }
+            
+            const streamUrl = 'http://localhost:8081/bjsn_corrected_output/segment_1.mp4';
+            log(`🎬 Loading BJSN stream: ${streamUrl}`);
+            setStatus('Loading BJSN stream...', 'info');
+            
+            try {
+                await player.load(streamUrl);
+                log('✅ Load operation completed', 'success');
+                setStatus('BJSN stream loaded successfully', 'success');
+                
+                // Additional debugging
+                setTimeout(() => {
+                    log(`📊 Video readyState: ${video.readyState}`);
+                    log(`📊 Video currentTime: ${video.currentTime}`);
+                    log(`📊 Video duration: ${video.duration}`);
+                    log(`📊 Video buffered ranges: ${video.buffered.length}`);
+                    
+                    if (video.buffered.length > 0) {
+                        for (let i = 0; i < video.buffered.length; i++) {
+                            log(`📊 Buffered range ${i}: ${video.buffered.start(i)}-${video.buffered.end(i)}`);
+                        }
+                    }
+                }, 2000);
+                
+            } catch (error) {
+                log(`❌ Load failed: ${error.message}`, 'error');
+                setStatus(`Load failed: ${error.message}`, 'error');
+            }
+        }
+        
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', initApp);
+    </script>
+</body>
+</html>

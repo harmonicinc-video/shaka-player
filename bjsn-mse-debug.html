@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BJSN MSE Debug Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        video {
+            width: 100%;
+            max-width: 640px;
+            height: auto;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 16px;
+        }
+        .log {
+            background: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>BJSN MSE Debug Test</h1>
+    
+    <video id="video" controls muted>
+        Your browser does not support the video tag.
+    </video>
+    
+    <div class="controls">
+        <button onclick="loadBjsnStream()">Load BJSN Stream</button>
+        <button onclick="checkMSESupport()">Check MSE Support</button>
+        <button onclick="clearLog()">Clear Log</button>
+    </div>
+    
+    <div id="log" class="log">Ready for testing...\n</div>
+
+    <!-- Include Shaka Player -->
+    <script src="node_modules/google-closure-library/closure/goog/base.js"></script>
+    <script src="dist/deps.js"></script>
+    <script src="shaka-player.uncompiled.js"></script>
+    
+    <script>
+        let player;
+        let video;
+        
+        function log(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            const logDiv = document.getElementById('log');
+            logDiv.textContent += `[${timestamp}] ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(message);
+        }
+        
+        function clearLog() {
+            document.getElementById('log').textContent = '';
+        }
+        
+        async function initApp() {
+            try {
+                // Install polyfills
+                shaka.polyfill.installAll();
+                
+                if (shaka.Player.isBrowserSupported()) {
+                    await initPlayer();
+                    log('✅ Shaka Player initialized successfully');
+                } else {
+                    log('❌ Browser not supported');
+                    return;
+                }
+            } catch (error) {
+                log('❌ Initialization failed: ' + error.message);
+            }
+        }
+        
+        async function initPlayer() {
+            video = document.getElementById('video');
+            player = new shaka.Player(video);
+            
+            // Configure for BJSN with detailed logging
+            player.configure({
+                manifest: {
+                    bjsn: {
+                        enabled: true,
+                        options: {
+                            debugLogging: true
+                        }
+                    }
+                }
+            });
+            
+            // Set up event listeners
+            player.addEventListener('error', (error) => {
+                log('❌ Player Error: ' + error.detail.message);
+            });
+            
+            player.addEventListener('loading', () => {
+                log('📡 Loading stream...');
+            });
+            
+            player.addEventListener('loaded', () => {
+                log('✅ Stream loaded successfully');
+                const manifest = player.getManifest();
+                if (manifest) {
+                    log(`📊 Manifest type: ${manifest.type}`);
+                    log(`📊 Variants: ${manifest.variants ? manifest.variants.length : 0}`);
+                    log(`📊 Duration: ${video.duration}`);
+                }
+            });
+            
+            player.addEventListener('streaming', () => {
+                log('🎬 Streaming started');
+            });
+            
+            player.addEventListener('buffering', (e) => {
+                log(`⏳ Buffering: ${e.buffering}`);
+            });
+            
+            // Attach to window for debugging
+            window.player = player;
+            window.video = video;
+        }
+        
+        async function loadBjsnStream() {
+            if (!player) {
+                log('❌ Player not initialized');
+                return;
+            }
+            
+            const streamUrl = 'http://localhost:8081/bjsn_corrected_output/segment_1.mp4';
+            log(`🔄 Loading BJSN stream: ${streamUrl}`);
+            
+            try {
+                await player.load(streamUrl);
+                log('✅ Load operation completed');
+                
+                // Additional debugging
+                setTimeout(() => {
+                    log(`📊 Video readyState: ${video.readyState}`);
+                    log(`📊 Video currentTime: ${video.currentTime}`);
+                    log(`📊 Video duration: ${video.duration}`);
+                    log(`📊 Video buffered ranges: ${video.buffered.length}`);
+                    
+                    if (video.buffered.length > 0) {
+                        for (let i = 0; i < video.buffered.length; i++) {
+                            log(`📊 Buffered range ${i}: ${video.buffered.start(i)}-${video.buffered.end(i)}`);
+                        }
+                    }
+                }, 2000);
+                
+            } catch (error) {
+                log(`❌ Load failed: ${error.message}`);
+            }
+        }
+        
+        function checkMSESupport() {
+            log('🔍 Checking MediaSource support...');
+            
+            if (!window.MediaSource) {
+                log('❌ MediaSource not supported');
+                return;
+            }
+            
+            log('✅ MediaSource is supported');
+            
+            // Test MIME types
+            const testMimeTypes = [
+                'video/mp4',
+                'video/mp4; codecs="avc1.640028"',
+                'video/mp4; codecs="avc1.640028, mp4a.40.2"',
+                'audio/mp4',
+                'audio/mp4; codecs="mp4a.40.2"'
+            ];
+            
+            testMimeTypes.forEach(mimeType => {
+                const supported = MediaSource.isTypeSupported(mimeType);
+                log(`${supported ? '✅' : '❌'} ${mimeType}: ${supported}`);
+            });
+        }
+        
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', initApp);
+    </script>
+</body>
+</html>
