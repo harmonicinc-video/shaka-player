@@ -114,7 +114,8 @@
     "build": "python build/all.py",
     "prepack": "clean-package",
     "postpack": "clean-package restore",
-    "prepublishOnly": "python build/checkversion.py && python build/all.py --force"
+    "prepublishOnly": "python build/checkversion.py && python build/all.py --force",
+    "bjsn-strip": "node tools/bjsn-stripper-cli.js"
   },
   "engines": {
     "node": ">=18"

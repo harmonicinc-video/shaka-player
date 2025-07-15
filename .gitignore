@@ -8,3 +8,7 @@ coverage/
 .vscode
 .babel-cache
 .idea/
+audio_first.mp4
+media_first_stripped.mp4
+media_first.mp4
+video_first.mp4

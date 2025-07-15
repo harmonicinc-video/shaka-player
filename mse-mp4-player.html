@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MSE MP4 Player Test</title>
+    <title>MSE MP4 Player Test with MP4 Segment Extraction</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            max-width: 800px;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
             background-color: #f5f5f5;
@@ -110,6 +110,37 @@
             border-left-color: #28a745;
         }
         
+        .extracted-buffers {
+            margin-top: 20px;
+            padding: 15px;
+            background: #e9ecef;
+            border-radius: 4px;
+        }
+        
+        .extracted-buffers h3 {
+            margin: 0 0 10px 0;
+            color: #495057;
+        }
+        
+        .buffer-info {
+            margin: 10px 0;
+            padding: 10px;
+            background: white;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        
+        .buffer-info h4 {
+            margin: 0 0 5px 0;
+            color: #333;
+        }
+        
+        .buffer-info .details {
+            font-family: monospace;
+            font-size: 12px;
+            color: #666;
+        }
+        
         .info {
             margin-top: 20px;
             padding: 15px;
@@ -134,7 +165,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>MSE MP4 Player Test</h1>
+        <h1>MSE MP4 Player Test with MP4 Segment Extraction</h1>
         
         <div class="file-input">
             <input type="file" id="fileInput" accept="video/mp4" />
@@ -145,6 +176,7 @@
         </div>
         
         <div class="controls">
+            <button id="extractBtn" disabled>Extract Buffers</button>
             <button id="loadBtn" disabled>Load Video</button>
             <button id="playBtn" disabled>Play</button>
             <button id="pauseBtn" disabled>Pause</button>
@@ -161,32 +193,104 @@
             <div class="status-item">Buffered Ranges: <span id="bufferedRanges">None</span></div>
         </div>
         
+        <div class="extracted-buffers" id="extractedBuffers" style="display: none;">
+            <h3>Extracted Buffers</h3>
+            <div id="initVideoBuffer" class="buffer-info">
+                <h4>Init Segment - Video Track</h4>
+                <div class="details">
+                    <div>Size: <span id="initVideoSize">0</span> bytes</div>
+                    <div>Track ID: <span id="initVideoTrackId">-</span></div>
+                    <div>Codec: <span id="initVideoCodec">-</span></div>
+                </div>
+            </div>
+            <div id="initAudioBuffer" class="buffer-info">
+                <h4>Init Segment - Audio Track</h4>
+                <div class="details">
+                    <div>Size: <span id="initAudioSize">0</span> bytes</div>
+                    <div>Track ID: <span id="initAudioTrackId">-</span></div>
+                    <div>Codec: <span id="initAudioCodec">-</span></div>
+                </div>
+            </div>
+            <div id="videoMediaBuffer" class="buffer-info">
+                <h4>Video Media Segments</h4>
+                <div class="details">
+                    <div>Size: <span id="videoMediaSize">0</span> bytes</div>
+                    <div>Fragments: <span id="videoFragCount">0</span></div>
+                </div>
+            </div>
+            <div id="audioMediaBuffer" class="buffer-info">
+                <h4>Audio Media Segments</h4>
+                <div class="details">
+                    <div>Size: <span id="audioMediaSize">0</span> bytes</div>
+                    <div>Fragments: <span id="audioFragCount">0</span></div>
+                </div>
+            </div>
+        </div>
+        
         <div class="info">
             <h3>How to Use</h3>
             <ul>
                 <li>Select an MP4 file using the file input above</li>
-                <li>Click "Load Video" to initialize MSE and load the file</li>
+                <li>Click "Extract Buffers" to parse the MP4 and extract init segments and media segments</li>
+                <li>The system will create track-specific init segments (moov boxes) preserving original track IDs</li>
+                <li>Click "Load Video" to initialize MSE and load the extracted buffers</li>
                 <li>Use the play/pause controls or the video player controls</li>
-                <li>Monitor the status panel for MSE state information</li>
+                <li>Monitor the status panel and browser console for detailed processing information</li>
             </ul>
             
             <h3>Technical Details</h3>
             <ul>
-                <li>Uses Media Source Extensions (MSE) for manual media control</li>
-                <li>Supports MP4 files with H.264 video and AAC audio</li>
-                <li>Demonstrates SourceBuffer management and media appending</li>
-                <li>Shows real-time MSE state and buffer information</li>
+                <li>Uses Shaka Player's MP4 parser for comprehensive segment extraction</li>
+                <li>Generates track-specific init segments with ftyp + filtered moov boxes</li>
+                <li>Preserves original track IDs in the reconstructed init segments</li>
+                <li>Filters mvex box to contain only trex entries for the target track</li>
+                <li>Groups moof+mdat pairs by track type into consolidated media buffers</li>
+                <li>Validates init segments before feeding to MSE SourceBuffers</li>
+                <li>Provides detailed logging for debugging and analysis</li>
+            </ul>
+            
+            <h3>Key Implementation Features</h3>
+            <ul>
+                <li><strong>Track-Specific Moov Generation:</strong> Creates separate moov boxes for each track containing only relevant metadata</li>
+                <li><strong>Box Structure Preservation:</strong> Maintains proper MP4 box hierarchy and structure</li>
+                <li><strong>Fragment Handling:</strong> Properly handles fragmented MP4 files with mvex/trex boxes</li>
+                <li><strong>Validation:</strong> Validates generated init segments for proper ftyp and moov box presence</li>
+                <li><strong>MIME Type Detection:</strong> Automatically detects appropriate MIME types based on extracted codec information</li>
             </ul>
         </div>
     </div>
 
+    <!-- Include Shaka Player Uncompiled -->
+    <script src="node_modules/google-closure-library/closure/goog/base.js"></script>
+    <script src="dist/deps.js"></script>
+    <script src="shaka-player.uncompiled.js"></script>
+    
     <script>
-        class MSEPlayer {
+        // Load the required modules
+        goog.require('shaka.util.Mp4Parser');
+        goog.require('shaka.util.Mp4BoxParsers');
+        goog.require('shaka.util.DataViewReader');
+        goog.require('shaka.util.BufferUtils');
+        goog.require('shaka.util.Uint8ArrayUtils');
+    </script>
+    
+    <script>
+        class MSEPlayerWithExtraction {
             constructor() {
                 this.video = document.getElementById('videoPlayer');
                 this.mediaSource = null;
-                this.sourceBuffer = null;
+                this.sourceBuffers = {};
                 this.selectedFile = null;
+                this.extractedBuffers = {
+                    initVideo: null,
+                    initAudio: null,
+                    videoMedia: null,
+                    audioMedia: null
+                };
+                this.trackInfo = {
+                    video: { trackId: null, codec: null },
+                    audio: { trackId: null, codec: null }
+                };
                 
                 this.initializeElements();
                 this.checkMSESupport();
@@ -196,11 +300,13 @@
             
             initializeElements() {
                 this.fileInput = document.getElementById('fileInput');
+                this.extractBtn = document.getElementById('extractBtn');
                 this.loadBtn = document.getElementById('loadBtn');
                 this.playBtn = document.getElementById('playBtn');
                 this.pauseBtn = document.getElementById('pauseBtn');
                 this.resetBtn = document.getElementById('resetBtn');
                 this.statusPanel = document.getElementById('statusPanel');
+                this.extractedBuffersPanel = document.getElementById('extractedBuffers');
             }
             
             checkMSESupport() {
@@ -212,58 +318,627 @@
                     return false;
                 }
                 
-                // Check for common MP4 codec support
-                const mp4Support = MediaSource.isTypeSupported('video/mp4; codecs="avc1.640028,mp4a.40.2"');
-                console.log('MP4 H.264/AAC support:', mp4Support);
-                
                 return true;
             }
             
             setupEventListeners() {
                 this.fileInput.addEventListener('change', (e) => {
                     this.selectedFile = e.target.files[0];
-                    this.loadBtn.disabled = !this.selectedFile;
+                    this.extractBtn.disabled = !this.selectedFile;
+                    this.loadBtn.disabled = true;
+                    this.extractedBuffersPanel.style.display = 'none';
                     this.updateStatus();
                 });
                 
+                this.extractBtn.addEventListener('click', () => this.extractBuffers());
                 this.loadBtn.addEventListener('click', () => this.loadVideo());
                 this.playBtn.addEventListener('click', () => this.play());
                 this.pauseBtn.addEventListener('click', () => this.pause());
                 this.resetBtn.addEventListener('click', () => this.reset());
                 
                 // Video events
-                this.video.addEventListener('loadstart', () => console.log('Video: loadstart'));
-                this.video.addEventListener('loadedmetadata', () => {
-                    console.log('Video: loadedmetadata');
-                    this.updateStatus();
-                });
-                this.video.addEventListener('loadeddata', () => console.log('Video: loadeddata'));
+                this.video.addEventListener('loadedmetadata', () => this.updateStatus());
                 this.video.addEventListener('canplay', () => {
-                    console.log('Video: canplay');
                     this.playBtn.disabled = false;
                     this.pauseBtn.disabled = false;
                 });
-                this.video.addEventListener('playing', () => console.log('Video: playing'));
-                this.video.addEventListener('pause', () => console.log('Video: pause'));
-                this.video.addEventListener('ended', () => console.log('Video: ended'));
+                this.video.addEventListener('timeupdate', () => this.updateStatus());
                 this.video.addEventListener('error', (e) => {
-                    console.error('Video error:', e);
                     this.showError('Video error: ' + e.message);
                 });
-                this.video.addEventListener('timeupdate', () => this.updateStatus());
                 
                 // Update status periodically
                 setInterval(() => this.updateStatus(), 1000);
             }
             
-            async loadVideo() {
+            async extractBuffers() {
                 if (!this.selectedFile) {
                     this.showError('Please select a file first');
                     return;
                 }
                 
                 try {
-                    this.showStatus('Loading video...', 'info');
+                    this.showStatus('Extracting MP4 buffers...', 'info');
+                    
+                    const arrayBuffer = await this.readFileAsArrayBuffer(this.selectedFile);
+                    const uint8Array = new Uint8Array(arrayBuffer);
+                    
+                    console.log('File read, size:', arrayBuffer.byteLength);
+                    
+                    // Parse MP4 and extract buffers
+                    await this.parseMP4AndExtractBuffers(uint8Array);
+                    
+                    this.showStatus('Buffers extracted successfully!', 'success');
+                    this.loadBtn.disabled = false;
+                    this.extractedBuffersPanel.style.display = 'block';
+                    this.updateExtractedBuffersUI();
+                    
+                } catch (error) {
+                    console.error('Error extracting buffers:', error);
+                    this.showError('Error extracting buffers: ' + error.message);
+                }
+            }
+            
+            async parseMP4AndExtractBuffers(data) {
+                return new Promise((resolve, reject) => {
+                    try {
+                        const mp4Data = {
+                            tracks: {},
+                            initSegments: { video: [], audio: [] },
+                            mediaSegments: { video: [], audio: [] }
+                        };
+                        
+                        // Parse the MP4 file
+                        const parser = new shaka.util.Mp4Parser();
+                        
+                        // Track parsing state
+                        let currentTrackId = null;
+                        let currentHandlerType = null;
+                        
+                        parser
+                            .box('ftyp', (box) => {
+                                console.log('Found ftyp box');
+                            })
+                            .box('moov', (box) => {
+                                console.log('Found moov box at:', box.start, 'size:', box.size);
+                                // Store the entire moov box location for later extraction
+                                mp4Data.moovBox = {
+                                    start: box.start,
+                                    size: box.size,
+                                    data: data.slice(box.start, box.start + box.size)
+                                };
+                                shaka.util.Mp4Parser.children(box);
+                            })
+                            .box('mvhd', (box) => {
+                                console.log('Found mvhd box');
+                            })
+                            .box('trak', (box) => {
+                                console.log('Found trak box');
+                                currentTrackId = null;
+                                currentHandlerType = null;
+                                shaka.util.Mp4Parser.children(box);
+                            })
+                            .fullBox('tkhd', (box) => {
+                                const parsed = shaka.util.Mp4BoxParsers.parseTKHD(box.reader, box.version);
+                                currentTrackId = parsed.trackId;
+                                console.log('Found tkhd box, track ID:', currentTrackId);
+                            })
+                            .box('mdia', (box) => {
+                                shaka.util.Mp4Parser.children(box);
+                            })
+                            .fullBox('mdhd', (box) => {
+                                const parsed = shaka.util.Mp4BoxParsers.parseMDHD(box.reader, box.version);
+                                console.log('Found mdhd box, timescale:', parsed.timescale);
+                            })
+                            .fullBox('hdlr', (box) => {
+                                const parsed = shaka.util.Mp4BoxParsers.parseHDLR(box.reader);
+                                currentHandlerType = parsed.handlerType;
+                                console.log('Found hdlr box, handler type:', currentHandlerType);
+                                
+                                // Store track info
+                                if (currentTrackId && currentHandlerType) {
+                                    mp4Data.tracks[currentTrackId] = {
+                                        trackId: currentTrackId,
+                                        handlerType: currentHandlerType,
+                                        type: currentHandlerType === 'vide' ? 'video' : 
+                                              currentHandlerType === 'soun' ? 'audio' : 'unknown'
+                                    };
+                                    console.log('Stored track info:', mp4Data.tracks[currentTrackId]);
+                                }
+                            })
+                            .box('minf', (box) => {
+                                shaka.util.Mp4Parser.children(box);
+                            })
+                            .box('stbl', (box) => {
+                                shaka.util.Mp4Parser.children(box);
+                            })
+                            .fullBox('stsd', (box) => {
+                                shaka.util.Mp4Parser.sampleDescription(box);
+                            })
+                            .box('avc1', (box) => {
+                                console.log('Found avc1 codec box');
+                                if (currentTrackId && mp4Data.tracks[currentTrackId]) {
+                                    mp4Data.tracks[currentTrackId].codec = 'avc1';
+                                }
+                                shaka.util.Mp4Parser.visualSampleEntry(box);
+                            })
+                            .box('mp4a', (box) => {
+                                console.log('Found mp4a codec box');
+                                if (currentTrackId && mp4Data.tracks[currentTrackId]) {
+                                    mp4Data.tracks[currentTrackId].codec = 'mp4a';
+                                }
+                                shaka.util.Mp4Parser.audioSampleEntry(box);
+                            })
+                            .box('moof', (box) => {
+                                console.log('Found moof box at:', box.start, 'size:', box.size);
+                                
+                                // Find corresponding mdat box
+                                const moofEnd = box.start + box.size;
+                                const mdatStart = this.findMdatAfterMoof(data, moofEnd);
+                                
+                                if (mdatStart !== -1) {
+                                    const mdatSize = this.getMdatSize(data, mdatStart);
+                                    
+                                    // Extract track ID from moof
+                                    const trackId = this.extractTrackIdFromMoof(data, box.start, box.size);
+                                    
+                                    if (trackId && mp4Data.tracks[trackId]) {
+                                        const trackType = mp4Data.tracks[trackId].type;
+                                        const segmentData = data.slice(box.start, mdatStart + mdatSize);
+                                        
+                                        mp4Data.mediaSegments[trackType].push({
+                                            trackId: trackId,
+                                            data: segmentData,
+                                            moofStart: box.start,
+                                            moofSize: box.size,
+                                            mdatStart: mdatStart,
+                                            mdatSize: mdatSize
+                                        });
+                                        
+                                        console.log(`Added ${trackType} segment for track ${trackId}, size:`, segmentData.length);
+                                    }
+                                }
+                            });
+                        
+                        parser.parse(data);
+                        
+                        // Generate separate init segments for each track
+                        this.generateInitSegments(mp4Data, data);
+                        
+                        // Combine media segments by track type
+                        this.combineMediaSegments(mp4Data);
+                        
+                        // Store the extracted buffers
+                        this.extractedBuffers = {
+                            initVideo: mp4Data.initSegments.video[0] || null,
+                            initAudio: mp4Data.initSegments.audio[0] || null,
+                            videoMedia: mp4Data.combinedMedia.video || null,
+                            audioMedia: mp4Data.combinedMedia.audio || null
+                        };
+                        
+                        // Store track info
+                        Object.values(mp4Data.tracks).forEach(track => {
+                            if (track.type === 'video') {
+                                this.trackInfo.video = { trackId: track.trackId, codec: track.codec };
+                            } else if (track.type === 'audio') {
+                                this.trackInfo.audio = { trackId: track.trackId, codec: track.codec };
+                            }
+                        });
+                        
+                        console.log('Extraction complete:', {
+                            tracks: mp4Data.tracks,
+                            initVideoSize: this.extractedBuffers.initVideo?.length || 0,
+                            initAudioSize: this.extractedBuffers.initAudio?.length || 0,
+                            videoMediaSize: this.extractedBuffers.videoMedia?.length || 0,
+                            audioMediaSize: this.extractedBuffers.audioMedia?.length || 0,
+                            trackInfo: this.trackInfo
+                        });
+                        
+                        console.log('Track-specific init segments created:');
+                        if (this.extractedBuffers.initVideo) {
+                            console.log('- Video init segment:', this.extractedBuffers.initVideo.length, 'bytes');
+                        }
+                        if (this.extractedBuffers.initAudio) {
+                            console.log('- Audio init segment:', this.extractedBuffers.initAudio.length, 'bytes');
+                        }
+                        
+                        resolve();
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
+            }
+            
+            findMdatAfterMoof(data, moofEnd) {
+                // Look for 'mdat' signature after moof
+                const mdatSignature = new Uint8Array([0x6D, 0x64, 0x61, 0x74]); // 'mdat'
+                
+                for (let i = moofEnd; i < data.length - 8; i++) {
+                    if (data[i] === mdatSignature[0] && 
+                        data[i + 1] === mdatSignature[1] && 
+                        data[i + 2] === mdatSignature[2] && 
+                        data[i + 3] === mdatSignature[3]) {
+                        return i - 4; // Return start of mdat box (including size)
+                    }
+                }
+                return -1;
+            }
+            
+            getMdatSize(data, mdatStart) {
+                // Read the size field (first 4 bytes of mdat box)
+                const dataView = new DataView(data.buffer, mdatStart, 4);
+                return dataView.getUint32(0);
+            }
+            
+            extractTrackIdFromMoof(data, moofStart, moofSize) {
+                // Parse moof to find tfhd box and extract track ID
+                const moofData = data.slice(moofStart, moofStart + moofSize);
+                let trackId = null;
+                
+                try {
+                    const parser = new shaka.util.Mp4Parser();
+                    parser
+                        .box('moof', (box) => {
+                            shaka.util.Mp4Parser.children(box);
+                        })
+                        .box('traf', (box) => {
+                            shaka.util.Mp4Parser.children(box);
+                        })
+                        .fullBox('tfhd', (box) => {
+                            const parsed = shaka.util.Mp4BoxParsers.parseTFHD(box.reader, box.flags);
+                            trackId = parsed.trackId;
+                        });
+                    
+                    parser.parse(moofData);
+                } catch (error) {
+                    console.error('Error extracting track ID from moof:', error);
+                }
+                
+                return trackId;
+            }
+            
+            generateInitSegments(mp4Data, originalData) {
+                // Extract ftyp box first
+                const ftypBox = this.extractFtypBox(originalData);
+                
+                // For each track, create a separate init segment with only that track's info
+                Object.values(mp4Data.tracks).forEach(track => {
+                    const trackSpecificMoov = this.createInitSegmentForTrack(mp4Data.moovBox.data, track);
+                    
+                    if (trackSpecificMoov) {
+                        // Combine ftyp + track-specific moov to create complete init segment
+                        const initSegment = this.combineInitSegmentBoxes(ftypBox, trackSpecificMoov);
+                        mp4Data.initSegments[track.type].push(initSegment);
+                        
+                        console.log(`Created init segment for ${track.type} track ${track.trackId}, size: ${initSegment.length} bytes`);
+                    }
+                });
+            }
+            
+            extractFtypBox(data) {
+                let ftypBox = null;
+                
+                try {
+                    const parser = new shaka.util.Mp4Parser();
+                    parser.box('ftyp', (box) => {
+                        const headerSize = shaka.util.Mp4Parser.headerSize(box);
+                        const startPos = box.start - headerSize;
+                        ftypBox = data.slice(startPos, startPos + box.size);
+                    });
+                    
+                    parser.parse(data, true, true); // Allow partial parsing and stop on partial
+                    
+                    return ftypBox;
+                } catch (error) {
+                    console.error('Error extracting ftyp box:', error);
+                    return null;
+                }
+            }
+            
+            combineInitSegmentBoxes(ftypBox, moovBox) {
+                if (!ftypBox || !moovBox) {
+                    console.error('Missing ftyp or moov box for init segment');
+                    return null;
+                }
+                
+                const totalSize = ftypBox.length + moovBox.length;
+                const initSegment = new Uint8Array(totalSize);
+                
+                // Copy ftyp box first
+                initSegment.set(ftypBox, 0);
+                
+                // Copy moov box after ftyp
+                initSegment.set(moovBox, ftypBox.length);
+                
+                return initSegment;
+            }
+            
+            createInitSegmentForTrack(moovData, targetTrack) {
+                console.log(`Creating init segment for track ${targetTrack.trackId} (${targetTrack.type})`);
+                
+                try {
+                    // Parse the original moov box to extract track-specific data
+                    const trackSpecificData = this.parseAndExtractTrackData(moovData, targetTrack.trackId);
+                    
+                    if (!trackSpecificData) {
+                        console.error('Failed to extract track-specific data for track', targetTrack.trackId);
+                        return null;
+                    }
+                    
+                    // Build a new moov box with only the target track
+                    const newMoovBox = this.buildTrackSpecificMoovBox(trackSpecificData, targetTrack);
+                    
+                    console.log(`Generated track-specific moov box for track ${targetTrack.trackId}, size: ${newMoovBox.length} bytes`);
+                    return newMoovBox;
+                    
+                } catch (error) {
+                    console.error('Error creating track-specific init segment:', error);
+                    return null;
+                }
+            }
+            
+            parseAndExtractTrackData(moovData, targetTrackId) {
+                const extractedData = {
+                    mvhd: null,
+                    targetTrak: null,
+                    mvex: null,
+                    otherBoxes: []
+                };
+                
+                try {
+                    const parser = new shaka.util.Mp4Parser();
+                    let currentTrackId = null;
+                    let currentTrakBox = null;
+                    let currentTrakData = null;
+                    
+                    parser
+                        .box('moov', (box) => {
+                            shaka.util.Mp4Parser.children(box);
+                        })
+                        .fullBox('mvhd', (box) => {
+                            // Store the entire mvhd box
+                            const headerSize = shaka.util.Mp4Parser.headerSize(box);
+                            const startPos = box.start - headerSize;
+                            const mvhdData = moovData.slice(startPos, startPos + box.size);
+                            extractedData.mvhd = mvhdData;
+                        })
+                        .box('trak', (box) => {
+                            // Store current trak box info
+                            currentTrakBox = box;
+                            currentTrackId = null;
+                            const headerSize = shaka.util.Mp4Parser.headerSize(box);
+                            const startPos = box.start - headerSize;
+                            currentTrakData = moovData.slice(startPos, startPos + box.size);
+                            
+                            shaka.util.Mp4Parser.children(box);
+                        })
+                        .fullBox('tkhd', (box) => {
+                            const parsed = shaka.util.Mp4BoxParsers.parseTKHD(box.reader, box.version);
+                            currentTrackId = parsed.trackId;
+                            
+                            // If this is our target track, store the entire trak box
+                            if (currentTrackId === targetTrackId && currentTrakData) {
+                                extractedData.targetTrak = currentTrakData;
+                            }
+                        })
+                        .box('mvex', (box) => {
+                            // Store the mvex box if present (for fragmented MP4)
+                            const headerSize = shaka.util.Mp4Parser.headerSize(box);
+                            const startPos = box.start - headerSize;
+                            const mvexData = moovData.slice(startPos, startPos + box.size);
+                            extractedData.mvex = mvexData;
+                        })
+                        .box('udta', (box) => {
+                            // Store user data box if present
+                            const headerSize = shaka.util.Mp4Parser.headerSize(box);
+                            const startPos = box.start - headerSize;
+                            const udtaData = moovData.slice(startPos, startPos + box.size);
+                            extractedData.otherBoxes.push(udtaData);
+                        });
+                    
+                    parser.parse(moovData);
+                    
+                    return extractedData;
+                } catch (error) {
+                    console.error('Error parsing moov data:', error);
+                    return null;
+                }
+            }
+            
+            buildTrackSpecificMoovBox(trackData, targetTrack) {
+                const boxes = [];
+                
+                // Add mvhd box (required) - modify to reflect single track
+                if (trackData.mvhd) {
+                    const modifiedMvhd = this.modifyMvhdForSingleTrack(trackData.mvhd);
+                    boxes.push(modifiedMvhd);
+                }
+                
+                // Add the target track's trak box
+                if (trackData.targetTrak) {
+                    boxes.push(trackData.targetTrak);
+                }
+                
+                // Add mvex box if present (for fragmented MP4)
+                if (trackData.mvex) {
+                    // Filter mvex to only include trex for our target track
+                    const filteredMvex = this.filterMvexForTrack(trackData.mvex, targetTrack.trackId);
+                    if (filteredMvex) {
+                        boxes.push(filteredMvex);
+                    }
+                }
+                
+                // Add other boxes
+                trackData.otherBoxes.forEach(box => {
+                    boxes.push(box);
+                });
+                
+                // Calculate total size
+                let totalSize = 8; // moov box header
+                boxes.forEach(box => {
+                    totalSize += box.length;
+                });
+                
+                // Create the new moov box
+                const newMoovBox = new Uint8Array(totalSize);
+                let offset = 0;
+                
+                // Write moov box header
+                const dataView = new DataView(newMoovBox.buffer);
+                dataView.setUint32(offset, totalSize); // size
+                offset += 4;
+                dataView.setUint32(offset, 0x6D6F6F76); // 'moov'
+                offset += 4;
+                
+                // Write all child boxes
+                boxes.forEach(box => {
+                    newMoovBox.set(box, offset);
+                    offset += box.length;
+                });
+                
+                return newMoovBox;
+            }
+            
+            modifyMvhdForSingleTrack(mvhdData) {
+                // For single track init segments, we might want to keep the original mvhd
+                // In a more sophisticated implementation, we could modify the next_track_ID
+                // to reflect that this is a single-track container
+                
+                // For now, return the original mvhd
+                // TODO: Consider modifying next_track_ID if needed
+                return mvhdData;
+            }
+            
+            filterMvexForTrack(mvexData, targetTrackId) {
+                try {
+                    const filteredBoxes = [];
+                    
+                    const parser = new shaka.util.Mp4Parser();
+                    parser
+                        .box('mvex', (box) => {
+                            shaka.util.Mp4Parser.children(box);
+                        })
+                        .box('mehd', (box) => {
+                            // Keep movie extends header
+                            const headerSize = shaka.util.Mp4Parser.headerSize(box);
+                            const startPos = box.start - headerSize;
+                            const mehdData = mvexData.slice(startPos, startPos + box.size);
+                            filteredBoxes.push(mehdData);
+                        })
+                        .fullBox('trex', (box) => {
+                            // Parse trex to check track ID
+                            const reader = new shaka.util.DataViewReader(
+                                box.reader.getDataView().buffer.slice(box.reader.getPosition()),
+                                shaka.util.DataViewReader.Endianness.BIG_ENDIAN
+                            );
+                            const trackId = reader.readUint32();
+                            
+                            // Only keep trex for our target track
+                            if (trackId === targetTrackId) {
+                                const headerSize = shaka.util.Mp4Parser.headerSize(box);
+                                const startPos = box.start - headerSize;
+                                const trexData = mvexData.slice(startPos, startPos + box.size);
+                                filteredBoxes.push(trexData);
+                            }
+                        });
+                    
+                    parser.parse(mvexData);
+                    
+                    if (filteredBoxes.length === 0) {
+                        return null;
+                    }
+                    
+                    // Calculate total size for filtered mvex
+                    let totalSize = 8; // mvex box header
+                    filteredBoxes.forEach(box => {
+                        totalSize += box.length;
+                    });
+                    
+                    // Create the new mvex box
+                    const newMvexBox = new Uint8Array(totalSize);
+                    let offset = 0;
+                    
+                    // Write mvex box header
+                    const dataView = new DataView(newMvexBox.buffer);
+                    dataView.setUint32(offset, totalSize); // size
+                    offset += 4;
+                    dataView.setUint32(offset, 0x6D766578); // 'mvex'
+                    offset += 4;
+                    
+                    // Write all child boxes
+                    filteredBoxes.forEach(box => {
+                        newMvexBox.set(box, offset);
+                        offset += box.length;
+                    });
+                    
+                    return newMvexBox;
+                } catch (error) {
+                    console.error('Error filtering mvex box:', error);
+                    return null;
+                }
+            }
+            
+            combineMediaSegments(mp4Data) {
+                mp4Data.combinedMedia = { video: null, audio: null };
+                
+                ['video', 'audio'].forEach(type => {
+                    const segments = mp4Data.mediaSegments[type];
+                    if (segments.length > 0) {
+                        // Calculate total size
+                        let totalSize = 0;
+                        segments.forEach(segment => {
+                            totalSize += segment.data.length;
+                        });
+                        
+                        // Combine all segments
+                        const combined = new Uint8Array(totalSize);
+                        let offset = 0;
+                        
+                        segments.forEach(segment => {
+                            combined.set(segment.data, offset);
+                            offset += segment.data.length;
+                        });
+                        
+                        mp4Data.combinedMedia[type] = combined;
+                        console.log(`Combined ${segments.length} ${type} segments into ${totalSize} bytes`);
+                    }
+                });
+            }
+            
+            updateExtractedBuffersUI() {
+                document.getElementById('initVideoSize').textContent = 
+                    this.extractedBuffers.initVideo ? this.extractedBuffers.initVideo.length : 0;
+                document.getElementById('initVideoTrackId').textContent = 
+                    this.trackInfo.video.trackId || '-';
+                document.getElementById('initVideoCodec').textContent = 
+                    this.trackInfo.video.codec || '-';
+                
+                document.getElementById('initAudioSize').textContent = 
+                    this.extractedBuffers.initAudio ? this.extractedBuffers.initAudio.length : 0;
+                document.getElementById('initAudioTrackId').textContent = 
+                    this.trackInfo.audio.trackId || '-';
+                document.getElementById('initAudioCodec').textContent = 
+                    this.trackInfo.audio.codec || '-';
+                
+                document.getElementById('videoMediaSize').textContent = 
+                    this.extractedBuffers.videoMedia ? this.extractedBuffers.videoMedia.length : 0;
+                document.getElementById('videoFragCount').textContent = 
+                    this.extractedBuffers.videoMedia ? '1+' : '0';
+                
+                document.getElementById('audioMediaSize').textContent = 
+                    this.extractedBuffers.audioMedia ? this.extractedBuffers.audioMedia.length : 0;
+                document.getElementById('audioFragCount').textContent = 
+                    this.extractedBuffers.audioMedia ? '1+' : '0';
+            }
+            
+            async loadVideo() {
+                if (!this.extractedBuffers.initVideo && !this.extractedBuffers.initAudio) {
+                    this.showError('No extracted buffers available. Please extract buffers first.');
+                    return;
+                }
+                
+                try {
+                    this.showStatus('Loading video with extracted buffers...', 'info');
                     
                     // Create MediaSource
                     this.mediaSource = new MediaSource();
@@ -277,39 +952,61 @@
                     
                     console.log('MediaSource opened');
                     
-                    // Create SourceBuffer
-                    const mimeType = 'video/mp4; codecs="avc1.640028,mp4a.40.2"';
+                    // Create SourceBuffers for available tracks
+                    const promises = [];
                     
-                    if (!MediaSource.isTypeSupported(mimeType)) {
-                        throw new Error('MIME type not supported: ' + mimeType);
+                    if (this.extractedBuffers.initVideo) {
+                        const videoMimeType = this.getVideoMimeType();
+                        if (MediaSource.isTypeSupported(videoMimeType)) {
+                            if (this.validateInitSegment(this.extractedBuffers.initVideo, 'video')) {
+                                this.sourceBuffers.video = this.mediaSource.addSourceBuffer(videoMimeType);
+                                console.log('Created video SourceBuffer with MIME type:', videoMimeType);
+                                promises.push(this.appendBuffer(this.sourceBuffers.video, this.extractedBuffers.initVideo));
+                            } else {
+                                console.error('Video init segment validation failed');
+                            }
+                        } else {
+                            console.error('Video MIME type not supported:', videoMimeType);
+                        }
                     }
                     
-                    this.sourceBuffer = this.mediaSource.addSourceBuffer(mimeType);
-                    console.log('SourceBuffer created');
-                    
-                    // Set up SourceBuffer events
-                    this.sourceBuffer.addEventListener('updateend', () => {
-                        console.log('SourceBuffer: updateend');
-                        this.updateStatus();
-                        
-                        if (this.sourceBuffer && !this.sourceBuffer.updating && this.mediaSource.readyState === 'open') {
-                            this.mediaSource.endOfStream();
-                            console.log('MediaSource: endOfStream called');
+                    if (this.extractedBuffers.initAudio) {
+                        const audioMimeType = this.getAudioMimeType();
+                        if (MediaSource.isTypeSupported(audioMimeType)) {
+                            if (this.validateInitSegment(this.extractedBuffers.initAudio, 'audio')) {
+                                this.sourceBuffers.audio = this.mediaSource.addSourceBuffer(audioMimeType);
+                                console.log('Created audio SourceBuffer with MIME type:', audioMimeType);
+                                promises.push(this.appendBuffer(this.sourceBuffers.audio, this.extractedBuffers.initAudio));
+                            } else {
+                                console.error('Audio init segment validation failed');
+                            }
+                        } else {
+                            console.error('Audio MIME type not supported:', audioMimeType);
                         }
-                    });
+                    }
                     
-                    this.sourceBuffer.addEventListener('error', (e) => {
-                        console.error('SourceBuffer error:', e);
-                        this.showError('SourceBuffer error');
-                    });
+                    // Wait for init segments to be appended
+                    await Promise.all(promises);
                     
-                    // Read and append file data
-                    const arrayBuffer = await this.readFileAsArrayBuffer(this.selectedFile);
-                    console.log('File read, size:', arrayBuffer.byteLength);
+                    // Append media segments
+                    const mediaPromises = [];
                     
-                    this.sourceBuffer.appendBuffer(arrayBuffer);
+                    if (this.extractedBuffers.videoMedia && this.sourceBuffers.video) {
+                        mediaPromises.push(this.appendBuffer(this.sourceBuffers.video, this.extractedBuffers.videoMedia));
+                    }
                     
-                    this.showStatus('Video loaded successfully!', 'success');
+                    if (this.extractedBuffers.audioMedia && this.sourceBuffers.audio) {
+                        mediaPromises.push(this.appendBuffer(this.sourceBuffers.audio, this.extractedBuffers.audioMedia));
+                    }
+                    
+                    await Promise.all(mediaPromises);
+                    
+                    // End the stream
+                    if (this.mediaSource.readyState === 'open') {
+                        this.mediaSource.endOfStream();
+                    }
+                    
+                    this.showStatus('Video loaded with extracted buffers!', 'success');
                     this.loadBtn.disabled = true;
                     this.resetBtn.disabled = false;
                     
@@ -317,6 +1014,112 @@
                     console.error('Error loading video:', error);
                     this.showError('Error loading video: ' + error.message);
                 }
+            }
+            
+            getVideoMimeType() {
+                const codec = this.trackInfo.video.codec;
+                switch (codec) {
+                    case 'avc1':
+                        return 'video/mp4; codecs="avc1.42E01E"';
+                    case 'hev1':
+                    case 'hvc1':
+                        return 'video/mp4; codecs="hev1.1.6.L93.90"';
+                    case 'av01':
+                        return 'video/mp4; codecs="av01.0.01M.08"';
+                    default:
+                        return 'video/mp4; codecs="avc1.42E01E"'; // fallback
+                }
+            }
+            
+            getAudioMimeType() {
+                const codec = this.trackInfo.audio.codec;
+                switch (codec) {
+                    case 'mp4a':
+                        return 'audio/mp4; codecs="mp4a.40.2"';
+                    case 'ac-3':
+                        return 'audio/mp4; codecs="ac-3"';
+                    case 'ec-3':
+                        return 'audio/mp4; codecs="ec-3"';
+                    default:
+                        return 'audio/mp4; codecs="mp4a.40.2"'; // fallback
+                }
+            }
+            
+            validateInitSegment(initSegment, trackType) {
+                if (!initSegment || initSegment.length === 0) {
+                    console.error(`Invalid ${trackType} init segment: empty or null`);
+                    return false;
+                }
+                
+                // Check for ftyp box at the beginning
+                const ftypSignature = new Uint8Array([0x66, 0x74, 0x79, 0x70]); // 'ftyp'
+                let hasFtyp = false;
+                
+                if (initSegment.length >= 8) {
+                    const typeBytes = initSegment.slice(4, 8);
+                    hasFtyp = typeBytes.every((byte, index) => byte === ftypSignature[index]);
+                }
+                
+                if (!hasFtyp) {
+                    console.warn(`${trackType} init segment missing ftyp box`);
+                }
+                
+                // Check for moov box
+                let hasMoov = false;
+                const moovSignature = new Uint8Array([0x6D, 0x6F, 0x6F, 0x76]); // 'moov'
+                
+                for (let i = 0; i < initSegment.length - 8; i++) {
+                    const typeBytes = initSegment.slice(i + 4, i + 8);
+                    if (typeBytes.every((byte, index) => byte === moovSignature[index])) {
+                        hasMoov = true;
+                        break;
+                    }
+                }
+                
+                if (!hasMoov) {
+                    console.error(`${trackType} init segment missing moov box`);
+                    return false;
+                }
+                
+                console.log(`${trackType} init segment validation passed`);
+                return true;
+            }
+            
+            appendBuffer(sourceBuffer, data) {
+                return new Promise((resolve, reject) => {
+                    if (!sourceBuffer || sourceBuffer.updating) {
+                        reject(new Error('SourceBuffer is not ready'));
+                        return;
+                    }
+                    
+                    console.log(`Appending ${data.length} bytes to SourceBuffer`);
+                    
+                    const onUpdateEnd = () => {
+                        sourceBuffer.removeEventListener('updateend', onUpdateEnd);
+                        sourceBuffer.removeEventListener('error', onError);
+                        console.log('SourceBuffer append completed successfully');
+                        resolve();
+                    };
+                    
+                    const onError = (event) => {
+                        sourceBuffer.removeEventListener('updateend', onUpdateEnd);
+                        sourceBuffer.removeEventListener('error', onError);
+                        console.error('SourceBuffer append error:', event);
+                        reject(new Error('SourceBuffer append error'));
+                    };
+                    
+                    sourceBuffer.addEventListener('updateend', onUpdateEnd);
+                    sourceBuffer.addEventListener('error', onError);
+                    
+                    try {
+                        sourceBuffer.appendBuffer(data);
+                    } catch (error) {
+                        sourceBuffer.removeEventListener('updateend', onUpdateEnd);
+                        sourceBuffer.removeEventListener('error', onError);
+                        console.error('SourceBuffer appendBuffer exception:', error);
+                        reject(error);
+                    }
+                });
             }
             
             readFileAsArrayBuffer(file) {
@@ -351,15 +1154,29 @@
                     this.mediaSource = null;
                 }
                 
-                this.sourceBuffer = null;
+                this.sourceBuffers = {};
                 this.selectedFile = null;
                 this.fileInput.value = '';
                 
+                this.extractedBuffers = {
+                    initVideo: null,
+                    initAudio: null,
+                    videoMedia: null,
+                    audioMedia: null
+                };
+                
+                this.trackInfo = {
+                    video: { trackId: null, codec: null },
+                    audio: { trackId: null, codec: null }
+                };
+                
+                this.extractBtn.disabled = true;
                 this.loadBtn.disabled = true;
                 this.playBtn.disabled = true;
                 this.pauseBtn.disabled = true;
                 this.resetBtn.disabled = true;
                 
+                this.extractedBuffersPanel.style.display = 'none';
                 this.showStatus('Player reset', 'info');
                 this.updateStatus();
             }
@@ -369,7 +1186,7 @@
                     this.mediaSource ? this.mediaSource.readyState : 'Not initialized';
                 
                 document.getElementById('sourceBufferState').textContent = 
-                    this.sourceBuffer ? 'Created' : 'Not created';
+                    Object.keys(this.sourceBuffers).length > 0 ? 'Created' : 'Not created';
                 
                 document.getElementById('videoDuration').textContent = 
                     this.video.duration ? this.video.duration.toFixed(2) + 's' : 'Unknown';
@@ -404,7 +1221,7 @@
         
         // Initialize the player when the page loads
         document.addEventListener('DOMContentLoaded', () => {
-            new MSEPlayer();
+            new MSEPlayerWithExtraction();
         });
     </script>
 </body>
