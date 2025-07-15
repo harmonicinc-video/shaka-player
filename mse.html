@@ -12,13 +12,6 @@
 
   <script type="text/javascript">
     (function() {
-      var baseUrl = 'https://bitdash-a.akamaihd.net/content/MI201109210084_1/video/720_2400000/dash/';
-      //var initUrl = baseUrl + 'init.mp4';
-      var initUrl = 'audio_first.mp4';
-      var templateUrl = baseUrl + 'segment_$Number$.m4s';
-      var sourceBuffer;
-      var index = 0;
-      var numberOfChunks = 52;
       var video = document.querySelector('video');
 
       if (!window.MediaSource) {
@@ -31,29 +24,40 @@
       ms.addEventListener('sourceopen', onMediaSourceOpen);
 
       function onMediaSourceOpen() {
-        //sourceBuffer = ms.addSourceBuffer('video/mp4; codecs="avc1.4d401f"');
-        //sourceBuffer = ms.addSourceBuffer('video/mp4; codecs="avc1.640028,mp4a.40.2"');
-        sourceBuffer = ms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"');
-        //sourceBuffer.addEventListener('updateend', nextSegment);
+        var videoSourceBuffer =
+            //ms.addSourceBuffer('video/mp4; codecs="avc1.64E01E"');
+            ms.addSourceBuffer('video/mp4; codecs="avc1.64001e"');
+            
+        //var audioSourceBuffer =
+        //    ms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"');
+        //var vInitFile = 'media_first_video_init.mp4';
+        //var vMediaFile = 'media_first_video_media.mp4';
+        var vInitFile = 'init.mp4';
+        var vMediaFile = 'bigVideo.mp4';
+        var onVideoInitAppended = function() {
+          videoSourceBuffer.removeEventListener('updateend', onVideoInitAppended);
+          GET(vMediaFile, function(data) {
+            videoSourceBuffer.appendBuffer(new Uint8Array(data));
+          });
+        };
+        videoSourceBuffer.addEventListener('updateend', onVideoInitAppended);
 
-        GET(initUrl, appendToBuffer);
+        // var onAudioInitAppended = function() {
+        //   audioSourceBuffer.removeEventListener('updateend', onAudioInitAppended);
+        //   GET('media_first_audio_media.mp4', function(data) {
+        //     audioSourceBuffer.appendBuffer(new Uint8Array(data));
+        //   });
+        // };
+        // audioSourceBuffer.addEventListener('updateend', onAudioInitAppended);
+
+        GET(vInitFile, function(data) {
+          videoSourceBuffer.appendBuffer(new Uint8Array(data));
+        });
+        // GET('media_first_audio_init.mp4', function(data) {
+        //   audioSourceBuffer.appendBuffer(new Uint8Array(data));
+        // });
 
         video.play();
-      }
-
-      function nextSegment() {
-        var url = templateUrl.replace('$Number$', index);
-        GET(url, appendToBuffer);
-        index++;
-        if (index > numberOfChunks) {
-          sourceBuffer.removeEventListener('updateend', nextSegment);
-        }
-      }
-
-      function appendToBuffer(videoChunk) {
-        if (videoChunk) {
-          sourceBuffer.appendBuffer(new Uint8Array(videoChunk));
-        }
       }
 
       function GET(url, callback) {
