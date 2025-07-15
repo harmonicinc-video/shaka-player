@@ -24,19 +24,18 @@
       ms.addEventListener('sourceopen', onMediaSourceOpen);
 
       function onMediaSourceOpen() {
-        // var vInitFile = 'media_first_video_init.mp4';
-        // var vMediaFile = 'media_first_video_media.mp4';
-        // var vCodec = 'avc1.64001E';
-        var vInitFile = 'init.mp4';
-        var vMediaFile = 'bigVideo.mp4';
-        var vCodec = 'avc1.64001e'
+        var vInitFile = 'media_first_video_init.mp4';
+        var vMediaFile = 'media_first_video_media.mp4';
+        var vCodec = 'avc1.64001E';
+        // var vInitFile = 'init.mp4';
+        // var vMediaFile = 'bigVideo.mp4';
+        // var vCodec = 'avc1.64001e'
 
         var videoSourceBuffer =
-            //ms.addSourceBuffer('video/mp4; codecs="avc1.64E01E"');
             ms.addSourceBuffer('video/mp4; codecs="' + vCodec +'"');
             
-        //var audioSourceBuffer =
-        //    ms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"');
+        var audioSourceBuffer =
+            ms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"');
        
         var onVideoInitAppended = function() {
           videoSourceBuffer.removeEventListener('updateend', onVideoInitAppended);
@@ -54,20 +53,20 @@
           }
         };
 
-        // var onAudioInitAppended = function() {
-        //   audioSourceBuffer.removeEventListener('updateend', onAudioInitAppended);
-        //   GET('media_first_audio_media.mp4', function(data) {
-        //     audioSourceBuffer.appendBuffer(new Uint8Array(data));
-        //   });
-        // };
-        // audioSourceBuffer.addEventListener('updateend', onAudioInitAppended);
+        var onAudioInitAppended = function() {
+          audioSourceBuffer.removeEventListener('updateend', onAudioInitAppended);
+          GET('media_first_audio_media.mp4', function(data) {
+            audioSourceBuffer.appendBuffer(new Uint8Array(data));
+          });
+        };
+        audioSourceBuffer.addEventListener('updateend', onAudioInitAppended);
 
         GET(vInitFile, function(data) {
           videoSourceBuffer.appendBuffer(new Uint8Array(data));
         });
-        // GET('media_first_audio_init.mp4', function(data) {
-        //   audioSourceBuffer.appendBuffer(new Uint8Array(data));
-        // });
+        GET('media_first_audio_init.mp4', function(data) {
+          audioSourceBuffer.appendBuffer(new Uint8Array(data));
+        });
 
         video.play();
       }
