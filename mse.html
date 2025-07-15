@@ -24,23 +24,35 @@
       ms.addEventListener('sourceopen', onMediaSourceOpen);
 
       function onMediaSourceOpen() {
+        // var vInitFile = 'media_first_video_init.mp4';
+        // var vMediaFile = 'media_first_video_media.mp4';
+        // var vCodec = 'avc1.64001E';
+        var vInitFile = 'init.mp4';
+        var vMediaFile = 'bigVideo.mp4';
+        var vCodec = 'avc1.64001e'
+
         var videoSourceBuffer =
             //ms.addSourceBuffer('video/mp4; codecs="avc1.64E01E"');
-            ms.addSourceBuffer('video/mp4; codecs="avc1.64001e"');
+            ms.addSourceBuffer('video/mp4; codecs="' + vCodec +'"');
             
         //var audioSourceBuffer =
         //    ms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"');
-        //var vInitFile = 'media_first_video_init.mp4';
-        //var vMediaFile = 'media_first_video_media.mp4';
-        var vInitFile = 'init.mp4';
-        var vMediaFile = 'bigVideo.mp4';
+       
         var onVideoInitAppended = function() {
           videoSourceBuffer.removeEventListener('updateend', onVideoInitAppended);
           GET(vMediaFile, function(data) {
+            videoSourceBuffer.addEventListener('updateend', onMediaAppended);
             videoSourceBuffer.appendBuffer(new Uint8Array(data));
           });
         };
         videoSourceBuffer.addEventListener('updateend', onVideoInitAppended);
+
+        var onMediaAppended = function() {
+          videoSourceBuffer.removeEventListener('updateend', onMediaAppended);
+          if (video.buffered.length > 0) {
+            video.currentTime = video.buffered.start(0);
+          }
+        };
 
         // var onAudioInitAppended = function() {
         //   audioSourceBuffer.removeEventListener('updateend', onAudioInitAppended);
