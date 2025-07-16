@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BJSN Player</title>
+  <style>
+    body { font-family: sans-serif; }
+    #mainContainer {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+    }
+    #videoContainer {
+        flex: 3;
+    }
+    video {
+      height: 80vh;
+      width: auto;
+      max-width: 100%;
+      background-color: black;
+    }
+    #infoContainer {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        height: 80vh; /* Match video viewport height */
+    }
+    #mediaInfo, #log {
+        border: 1px solid #ccc;
+        padding: 5px;
+        background-color: #f5f5f5;
+        white-space: pre-wrap;
+        word-break: break-all;
+        margin-bottom: 10px;
+    }
+    #mediaInfo {
+        flex-shrink: 0; /* Prevent the media info box from shrinking */
+        max-height: 15em; /* Approx 10 lines */
+        overflow-y: auto;
+    }
+    #log {
+        flex-grow: 1;
+        overflow-y: scroll;
+    }
+  </style>
+</head>
+<body>
+  <h1>BJSN Player</h1>
+  <div>
+    <input type="text" id="urlInput" value="media_first.mp4" style="width: 50%;" />
+    <button id="loadButton">Load</button>
+  </div>
+  <div id="mainContainer">
+    <div id="videoContainer">
+      <video controls autoplay></video>
+    </div>
+    <div id="infoContainer">
+      <h2>Media Info</h2>
+      <pre id="mediaInfo"></pre>
+      <h2>Log</h2>
+      <pre id="log"></pre>
+    </div>
+  </div>
+
+  <script src="node_modules/google-closure-library/closure/goog/base.js"></script>
+  <script src="dist/deps.js"></script>
+  <script src="shaka-player.uncompiled.js"></script>
+  <script>
+    goog.require('shaka.util.BjsnParser');
+    goog.require('shaka.util.BjsnBoxStripper');
+    goog.require('shaka.util.BjsnCodecDetector');
+  </script>
+
+  <script type="text/javascript">
+    (async function() {
+      const video = document.querySelector('video');
+      const logElement = document.getElementById('log');
+      const mediaInfoElement = document.getElementById('mediaInfo');
+      const urlInput = document.getElementById('urlInput');
+      const loadButton = document.getElementById('loadButton');
+      let activeSession = null;
+
+      function log(message, ...args) {
+        console.log(message, ...args);
+        const text = [message, ...args.map(arg => JSON.stringify(arg, null, 2))].join(' ');
+        logElement.textContent += text + '\n';
+        logElement.scrollTop = logElement.scrollHeight;
+      }
+
+      if (!window.MediaSource) {
+        log('No Media Source API available');
+        return;
+      }
+
+      class Mp4BoxUtils {
+        static readUint32(data, offset) {
+          return (data[offset] << 24) | (data[offset + 1] << 16) | (data[offset + 2] << 8) | data[offset + 3];
+        }
+
+        static writeUint32(data, offset, value) {
+          data[offset] = (value >> 24) & 0xFF;
+          data[offset + 1] = (value >> 16) & 0xFF;
+          data[offset + 2] = (value >> 8) & 0xFF;
+          data[offset + 3] = value & 0xFF;
+        }
+
+        static getBoxType(data, offset) {
+          return String.fromCharCode(data[offset], data[offset + 1], data[offset + 2], data[offset + 3]);
+        }
+
+        static parseTopLevelBoxes(data) {
+          const boxes = [];
+          let offset = 0;
+          while (offset < data.length - 8) {
+            let size = Mp4BoxUtils.readUint32(data, offset);
+            const type = Mp4BoxUtils.getBoxType(data, offset + 4);
+            if (size === 1) {
+              log('64-bit box size not supported');
+              return [];
+            }
+            if (offset + size > data.length) {
+              log(`Box ${type} size ${size} exceeds buffer length`);
+              break;
+            }
+            boxes.push({ type, offset, size, data: data.slice(offset, offset + size) });
+            offset += size;
+          }
+          return boxes;
+        }
+
+        static parseChildBoxes(parentData) {
+            const boxes = [];
+            let offset = 8; // Skip parent box header
+            while (offset < parentData.length - 8) {
+                const size = Mp4BoxUtils.readUint32(parentData, offset);
+                const type = Mp4BoxUtils.getBoxType(parentData, offset + 4);
+                if (size === 0 || offset + size > parentData.length) {
+                    break;
+                }
+                boxes.push({ type, offset, size, data: parentData.slice(offset, offset + size) });
+                offset += size;
+            }
+            return boxes;
+        }
+      }
+
+      class BjsnMp4Processor {
+        static processFile(data) {
+          const strippedData = BjsnMp4Processor.stripBjsnBox(data);
+          const boxes = Mp4BoxUtils.parseTopLevelBoxes(strippedData);
+          const ftypBox = boxes.find(b => b.type === 'ftyp');
+          const moovBox = boxes.find(b => b.type === 'moov');
+          const moofBoxes = boxes.filter(b => b.type === 'moof');
+          const mdatBoxes = boxes.filter(b => b.type === 'mdat');
+
+          if (!ftypBox || !moovBox) {
+            // For subsequent segments, moov is not expected.
+            // We can handle this by calling a different method for media segments.
+            return BjsnMp4Processor.processMediaSegment(data, []);
+          }
+
+          const tracks = BjsnMp4Processor.parseTracksFromMoov(moovBox.data);
+          const initSegments = {};
+          tracks.forEach(track => {
+            initSegments[track.id] = BjsnMp4Processor.createInitSegmentForTrack(ftypBox.data, moovBox.data, track.id, tracks);
+          });
+
+          const mediaSegments = BjsnMp4Processor.groupMediaSegmentsByTrack(moofBoxes, mdatBoxes, tracks);
+          return { tracks, initSegments, mediaSegments };
+        }
+
+        static processMediaSegment(data, trackIds) {
+          const boxes = Mp4BoxUtils.parseTopLevelBoxes(data);
+          const moofBoxes = boxes.filter(b => b.type === 'moof');
+          const mdatBoxes = boxes.filter(b => b.type === 'mdat');
+
+          const tracks = trackIds.map(id => ({ id }));
+          const mediaSegments = BjsnMp4Processor.groupMediaSegmentsByTrack(moofBoxes, mdatBoxes, tracks);
+          return { mediaSegments };
+        }
+
+        static stripBjsnBox(data) {
+          const boxes = Mp4BoxUtils.parseTopLevelBoxes(data);
+          const nonBjsnBoxes = boxes.filter(b => b.type !== 'bjsn');
+          const totalSize = nonBjsnBoxes.reduce((sum, box) => sum + box.data.length, 0);
+          const result = new Uint8Array(totalSize);
+          let offset = 0;
+          nonBjsnBoxes.forEach(box => {
+            result.set(box.data, offset);
+            offset += box.data.length;
+          });
+          return result;
+        }
+
+        static parseTracksFromMoov(moovData) {
+          const tracks = [];
+          const moovChildren = Mp4BoxUtils.parseChildBoxes(moovData);
+          moovChildren.forEach(child => {
+            if (child.type === 'trak') {
+              const track = BjsnMp4Processor.parseTrack(child.data);
+              if (track) {
+                tracks.push(track);
+              }
+            }
+          });
+          return tracks;
+        }
+
+        static parseTrack(trakData) {
+          let trackId = null;
+          let handlerType = null;
+          const trakChildren = Mp4BoxUtils.parseChildBoxes(trakData);
+          const tkhdBox = trakChildren.find(b => b.type === 'tkhd');
+          if (tkhdBox) {
+            trackId = BjsnMp4Processor.parseTrackId(tkhdBox.data);
+          }
+          const mdiaBox = trakChildren.find(b => b.type === 'mdia');
+          if (mdiaBox) {
+            handlerType = BjsnMp4Processor.findHandlerType(mdiaBox.data);
+          }
+          if (trackId !== null && handlerType !== null) {
+            return { id: trackId, handlerType, trak: trakData };
+          }
+          return null;
+        }
+
+        static parseTrackId(tkhdData) {
+          const version = tkhdData[8];
+          // version(1) + flags(3) + creation_time(4/8) + modification_time(4/8)
+          const trackIdOffset = version === 1 ? 28 : 20;
+          if (tkhdData.length >= trackIdOffset + 4) {
+            return Mp4BoxUtils.readUint32(tkhdData, trackIdOffset);
+          }
+          return null;
+        }
+
+        static findHandlerType(mdiaData) {
+          const mdiaChildren = Mp4BoxUtils.parseChildBoxes(mdiaData);
+          const hdlrBox = mdiaChildren.find(b => b.type === 'hdlr');
+          if (hdlrBox && hdlrBox.data.length >= 24) {
+            return Mp4BoxUtils.getBoxType(hdlrBox.data, 16);
+          }
+          return null;
+        }
+
+        static createInitSegmentForTrack(ftypData, moovData, trackId, allTracks) {
+          const filteredMoov = BjsnMp4Processor.filterMoovForTrack(moovData, trackId, allTracks);
+          const initSegment = new Uint8Array(ftypData.length + filteredMoov.length);
+          initSegment.set(ftypData, 0);
+          initSegment.set(filteredMoov, ftypData.length);
+          return initSegment;
+        }
+
+        static filterMoovForTrack(moovData, trackId, allTracks) {
+            const moovChildren = Mp4BoxUtils.parseChildBoxes(moovData);
+            const filteredChildren = [];
+            moovChildren.forEach(child => {
+                if (child.type !== 'trak' && child.type !== 'mvex') {
+                    filteredChildren.push(child.data);
+                } else if (child.type === 'trak') {
+                    const currentTrackId = BjsnMp4Processor.getTrackIdFromTrak(child.data);
+                    if (currentTrackId === trackId) {
+                        filteredChildren.push(child.data);
+                    }
+                } else if (child.type === 'mvex') {
+                    // Keep mvex, but filter trex inside
+                    const mvexChildren = Mp4BoxUtils.parseChildBoxes(child.data);
+                    const filteredTrex = mvexChildren.filter(trex => {
+                        if (trex.type === 'trex') {
+                            const trexTrackId = Mp4BoxUtils.readUint32(trex.data, 12);
+                            return trexTrackId === trackId;
+                        }
+                        return true; // keep other boxes inside mvex
+                    });
+                    const newMvexPayload = new Uint8Array(filteredTrex.reduce((s, b) => s + b.data.length, 0));
+                    let offset = 0;
+                    filteredTrex.forEach(b => {
+                        newMvexPayload.set(b.data, offset);
+                        offset += b.data.length;
+                    });
+
+                    const newMvex = new Uint8Array(8 + newMvexPayload.length);
+                    Mp4BoxUtils.writeUint32(newMvex, 0, newMvex.length);
+                    newMvex[4] = 'm'.charCodeAt(0);
+                    newMvex[5] = 'v'.charCodeAt(0);
+                    newMvex[6] = 'e'.charCodeAt(0);
+                    newMvex[7] = 'x'.charCodeAt(0);
+                    newMvex.set(newMvexPayload, 8);
+                    filteredChildren.push(newMvex);
+                }
+            });
+
+            const payloadSize = filteredChildren.reduce((sum, child) => sum + child.length, 0);
+            const payload = new Uint8Array(payloadSize);
+            let offset = 0;
+            filteredChildren.forEach(child => {
+                payload.set(child, offset);
+                offset += child.length;
+            });
+
+            const newMoov = new Uint8Array(8 + payload.length);
+            Mp4BoxUtils.writeUint32(newMoov, 0, newMoov.length);
+            newMoov[4] = 'm'.charCodeAt(0);
+            newMoov[5] = 'o'.charCodeAt(0);
+            newMoov[6] = 'o'.charCodeAt(0);
+            newMoov[7] = 'v'.charCodeAt(0);
+            newMoov.set(payload, 8);
+            return newMoov;
+        }
+
+        static getTrackIdFromTrak(trakData) {
+            const tkhdBox = Mp4BoxUtils.parseChildBoxes(trakData).find(b => b.type === 'tkhd');
+            if (tkhdBox) {
+                return BjsnMp4Processor.parseTrackId(tkhdBox.data);
+            }
+            return null;
+        }
+
+        static groupMediaSegmentsByTrack(moofBoxes, mdatBoxes, tracks) {
+          const mediaSegments = {};
+          tracks.forEach(t => mediaSegments[t.id] = []);
+
+          if (moofBoxes.length !== mdatBoxes.length) {
+              log('Warning: moof and mdat box counts do not match.');
+          }
+
+          for (let i = 0; i < moofBoxes.length; i++) {
+              const moof = moofBoxes[i];
+              const mdat = mdatBoxes[i];
+              const trackId = BjsnMp4Processor.getTrackIdFromMoof(moof.data);
+              if (trackId && mediaSegments[trackId]) {
+                  const segmentData = new Uint8Array(moof.size + mdat.size);
+                  segmentData.set(moof.data, 0);
+                  segmentData.set(mdat.data, moof.size);
+                  mediaSegments[trackId].push(segmentData);
+              }
+          }
+          return mediaSegments;
+        }
+
+        static getTrackIdFromMoof(moofData) {
+            const trafBox = Mp4BoxUtils.parseChildBoxes(moofData).find(b => b.type === 'traf');
+            if (trafBox) {
+                const tfhdBox = Mp4BoxUtils.parseChildBoxes(trafBox.data).find(b => b.type === 'tfhd');
+                if (tfhdBox) {
+                    // A 'tfhd' box is a "full box" which contains a version and flags.
+                    // The track_ID is after the 8-byte box header, 1-byte version, and 3-byte flags.
+                    const trackIdOffset = 8 + 4;
+                    if (tfhdBox.data.length >= trackIdOffset + 4) {
+                      return Mp4BoxUtils.readUint32(tfhdBox.data, trackIdOffset);
+                    }
+                }
+            }
+            return null;
+        }
+      }
+
+      class PlaybackSession {
+        constructor(videoElement, initialUrl) {
+          this.video = videoElement;
+          this.initialUrl = initialUrl;
+          this.ms = new MediaSource();
+          this.fetchInterval = null;
+          this.isActive = true;
+        }
+
+        async start() {
+          this.video.src = window.URL.createObjectURL(this.ms);
+          this.ms.addEventListener('sourceopen', () => this.onSourceOpen());
+        }
+
+        stop() {
+          this.isActive = false;
+          if (this.fetchInterval) {
+            clearInterval(this.fetchInterval);
+            this.fetchInterval = null;
+          }
+          try {
+            if (this.ms && this.ms.readyState === 'open') {
+              this.ms.endOfStream();
+            }
+          } catch (e) {
+            log('Error during endOfStream:', e.message);
+          }
+          if (this.video.src) {
+            window.URL.revokeObjectURL(this.video.src);
+            this.video.removeAttribute('src');
+            this.video.load();
+          }
+        }
+
+        async onSourceOpen() {
+          if (!this.isActive) return;
+
+          try {
+            log('MediaSource opened');
+            log('Fetching initial segment:', this.initialUrl);
+            const initialData = await GET(this.initialUrl);
+            if (!this.isActive) return;
+
+            log('Initial segment fetched, size:', initialData.length);
+
+            log('Parsing BJSN box...');
+            const bjsnData = shaka.util.BjsnParser.parseFromSegment(initialData);
+            if (!bjsnData) {
+              throw new Error('BJSN box not found or failed to parse.');
+            }
+            log('BJSN data parsed:', bjsnData);
+
+            log('Processing MP4 file...');
+            const processed = BjsnMp4Processor.processFile(initialData);
+            log('MP4 processed:', {
+                tracks: processed.tracks.map(t => ({id: t.id, type: t.handlerType})),
+                initSegments: Object.keys(processed.initSegments),
+                mediaSegments: Object.keys(processed.mediaSegments).map(k => ({id: k, count: processed.mediaSegments[k].length}))
+            });
+
+            const videoTrack = processed.tracks.find(t => t.handlerType === 'vide');
+            const audioTrack = processed.tracks.find(t => t.handlerType === 'soun');
+
+            if (!videoTrack || !audioTrack) {
+              throw new Error('Could not find both video and audio tracks.');
+            }
+
+            const videoInit = processed.initSegments[videoTrack.id];
+            const audioInit = processed.initSegments[audioTrack.id];
+
+            log('Detecting codecs...');
+            const videoCodecInfo = await shaka.util.BjsnCodecDetector.detectCodecsFromSegment(videoInit);
+            const audioCodecInfo = await shaka.util.BjsnCodecDetector.detectCodecsFromSegment(audioInit);
+            const videoCodec = videoCodecInfo.video;
+            const audioCodec = audioCodecInfo.audio;
+
+            if (!videoCodec || !audioCodec) {
+              throw new Error('Could not detect codecs.');
+            }
+            log('Codecs detected:', { video: videoCodec, audio: audioCodec });
+
+            mediaInfoElement.textContent =
+              `BJSN Info:\n${JSON.stringify(bjsnData, null, 2)}\n\n` +
+              `Codec fix:\n` +
+              `  Video: ${videoCodec}\n` +
+              `  Audio: ${audioCodec}`;
+
+            if (!this.isActive || this.ms.readyState !== 'open') return;
+            const videoSourceBuffer = this.ms.addSourceBuffer(`video/mp4; codecs="${videoCodec}"`);
+            const audioSourceBuffer = this.ms.addSourceBuffer(`audio/mp4; codecs="${audioCodec}"`);
+
+            const appendQueue = [];
+            let isAppending = false;
+            let initialSegmentsAppended = false;
+
+            const addToQueue = (sb, data) => {
+              appendQueue.push({sb, data});
+              if (!isAppending) {
+                processQueue();
+              }
+            }
+
+            const processQueue = () => {
+              if (!this.isActive || appendQueue.length === 0) {
+                isAppending = false;
+                if (!initialSegmentsAppended) {
+                  initialSegmentsAppended = true;
+                  // User requested code to set currentTime
+                  if (this.video.buffered.length > 0) {
+                    try {
+                      log('Setting currentTime to start of buffered range:', this.video.buffered.start(0));
+                      this.video.currentTime = this.video.buffered.start(0);
+                    } catch (e) {
+                      log('Error setting currentTime:', e.message);
+                    }
+                  }
+                }
+                return;
+              }
+              isAppending = true;
+              const {sb, data} = appendQueue.shift();
+              const onUpdateEnd = () => {
+                sb.removeEventListener('updateend', onUpdateEnd);
+                processQueue();
+              };
+              sb.addEventListener('updateend', onUpdateEnd);
+              try {
+                sb.appendBuffer(data);
+              } catch (e) {
+                log('Error appending buffer:', e.message);
+                processQueue();
+              }
+            }
+
+            log('Appending init segments...');
+            addToQueue(videoSourceBuffer, videoInit);
+            addToQueue(audioSourceBuffer, audioInit);
+
+            log('Appending initial media segments...');
+            processed.mediaSegments[videoTrack.id].forEach(seg => addToQueue(videoSourceBuffer, seg));
+            processed.mediaSegments[audioTrack.id].forEach(seg => addToQueue(audioSourceBuffer, seg));
+
+            let currentSeqNum = bjsnData.seq_num;
+            const templateUrl = bjsnData.template_path;
+            const baseUrl = new URL(this.initialUrl, window.location.href);
+            const segmentDurationMs = 1000; // Assume 1-second segments for refresh rate
+
+            const scheduleNextFetch = (delay) => {
+              if (!this.isActive) return;
+              this.fetchInterval = setTimeout(fetchNextSegment, delay);
+            };
+
+            const fetchNextSegment = async () => {
+              if (!this.isActive) return;
+
+              const startTime = Date.now();
+              currentSeqNum++;
+              const nextSegmentFile = templateUrl.replace('${num}', currentSeqNum);
+              const nextUrl = new URL(nextSegmentFile, baseUrl).href;
+              try {
+                log('Fetching next segment:', nextUrl);
+                const nextData = await GET(nextUrl);
+                if (!this.isActive) return;
+                log('Fetched segment', currentSeqNum, 'size:', nextData.length);
+
+                const nextProcessed = BjsnMp4Processor.processMediaSegment(nextData, [videoTrack.id, audioTrack.id]);
+                if (nextProcessed.mediaSegments[videoTrack.id]) {
+                  nextProcessed.mediaSegments[videoTrack.id].forEach(seg => addToQueue(videoSourceBuffer, seg));
+                }
+                if (nextProcessed.mediaSegments[audioTrack.id]) {
+                  nextProcessed.mediaSegments[audioTrack.id].forEach(seg => addToQueue(audioSourceBuffer, seg));
+                }
+              } catch (e) {
+                log('Failed to fetch segment', currentSeqNum, e.message);
+                currentSeqNum--;
+              } finally {
+                if (this.isActive) {
+                  const endTime = Date.now();
+                  const duration = endTime - startTime;
+                  const delay = Math.max(0, segmentDurationMs - duration);
+                  log(`Fetch/process took ${duration}ms, next fetch in ${delay}ms`);
+                  scheduleNextFetch(delay);
+                }
+              }
+            };
+
+            scheduleNextFetch(segmentDurationMs);
+
+          } catch (error) {
+            if (this.isActive) {
+              log('Error in playback session:', error);
+            }
+          }
+        }
+      }
+
+      function GET(url) {
+        return new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', url);
+          xhr.responseType = 'arraybuffer';
+          xhr.onload = (e) => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              resolve(new Uint8Array(xhr.response));
+            } else {
+              reject(new Error('Request failed: ' + xhr.statusText));
+            }
+          };
+          xhr.onerror = () => reject(new Error('Network error'));
+          xhr.send();
+        });
+      }
+
+      function startPlayback(initialUrl) {
+        if (activeSession) {
+          activeSession.stop();
+        }
+        logElement.textContent = ''; // Clear log
+        mediaInfoElement.textContent = ''; // Clear media info
+        activeSession = new PlaybackSession(video, initialUrl);
+        activeSession.start();
+      }
+
+      loadButton.addEventListener('click', () => {
+        const url = urlInput.value.trim();
+        if (!url) {
+          log('URL input is empty');
+          return;
+        }
+
+        if (activeSession) {
+          log('Stopping active session');
+          activeSession.stop();
+        }
+
+        log('Starting new session for URL:', url);
+        activeSession = new PlaybackSession(video, url);
+        activeSession.start();
+      });
+    })();
+  </script>
+</body>
+</html>
