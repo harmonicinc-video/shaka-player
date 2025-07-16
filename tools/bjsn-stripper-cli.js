@@ -7,255 +7,610 @@
  */
 
 /**
- * @fileoverview CLI tool for stripping BJSN boxes from MP4 files
+ * @fileoverview Enhanced CLI tool for processing BJSN-enabled MP4 files
  * 
- * This tool provides a command-line interface to remove BJSN boxes from MP4 files
- * using the Shaka Player's BjsnBoxStripper utility.
+ * This tool can:
+ * 1. Strip BJSN boxes from MP4 files
+ * 2. Extract separate init segments for each track (with proper filtering)
+ * 3. Extract separate media segments for video and audio tracks
+ * 4. Detect and display codec information using Shaka's codec detector
  * 
  * Usage:
- *   node bjsn-stripper-cli.js <input-file> [output-file]
- * 
- * Examples:
- *   node bjsn-stripper-cli.js input.mp4 output.mp4
- *   node bjsn-stripper-cli.js input.mp4  // Will create input_stripped.mp4
+ *   node bjsn-stripper-cli.js [options] <input-file> [output-prefix]
  */
 
 const fs = require('fs');
 const path = require('path');
 
-// Simple implementation of the BJSN box stripper functionality
-// This is a standalone version that doesn't depend on the full Shaka Player library
-
-class BjsnBoxStripper {
-  /**
-   * Strip BJSN box from MP4 segment data
-   * @param {Uint8Array} segmentData - MP4 segment data containing BJSN box
-   * @return {Uint8Array} Clean MP4 segment data without BJSN box
-   */
-  static stripBjsnBox(segmentData) {
-    try {
-      console.log('🔧 BJSN STRIPPER: Starting to strip BJSN box');
-      console.log('  📏 Input segment size:', segmentData.length, 'bytes');
-      
-      // Check if this segment actually contains a BJSN box
-      if (!BjsnBoxStripper.hasBjsnBox(segmentData)) {
-        console.log('  ✅ No BJSN box found, returning original data');
-        return segmentData;
-      }
-      
-      const bjsnBoxInfo = BjsnBoxStripper.findBjsnBox(segmentData);
-      if (!bjsnBoxInfo) {
-        console.log('  ⚠️ BJSN box detection failed, returning original data');
-        return segmentData;
-      }
-      
-      console.log('  🔍 BJSN box found at offset:', bjsnBoxInfo.start, 'size:', bjsnBoxInfo.size);
-      
-      // Create new segment without BJSN box
-      const strippedData = BjsnBoxStripper.removeBox(segmentData, bjsnBoxInfo);
-      
-      console.log('  ✅ BJSN box stripped successfully');
-      console.log('  📏 Output segment size:', strippedData.length, 'bytes');
-      console.log('  📊 Size reduction:', segmentData.length - strippedData.length, 'bytes');
-      
-      return strippedData;
-    } catch (error) {
-      console.error('  ❌ BJSN stripping failed:', error.message);
-      console.log('  🔄 Falling back to original data');
-      return segmentData;
+// Try to load Shaka Player utilities if available
+let BjsnCodecDetector = null;
+try {
+  const compiledPath = path.join(__dirname, '..', 'dist', 'shaka-player.compiled.js');
+  if (fs.existsSync(compiledPath)) {
+    const shaka = require(compiledPath);
+    if (shaka.util && shaka.util.BjsnCodecDetector) {
+      BjsnCodecDetector = shaka.util.BjsnCodecDetector;
+      console.log('✅ Loaded Shaka Player codec detector');
     }
+  }
+} catch (e) {
+  console.log('⚠️ Could not load Shaka Player, using fallback codec detection');
+}
+
+// Fallback codec detector if Shaka is not available
+if (!BjsnCodecDetector) {
+  BjsnCodecDetector = {
+    detectCodecsFromSegment: async (data) => {
+      let videoCodec = null;
+      let audioCodec = null;
+      
+      // Look for codec boxes in the data
+      for (let i = 0; i < data.length - 8; i++) {
+        const boxSize = (data[i] << 24) | (data[i + 1] << 16) | (data[i + 2] << 8) | data[i + 3];
+        const boxType = String.fromCharCode(data[i + 4], data[i + 5], data[i + 6], data[i + 7]);
+        
+        if (boxType === 'avcC' && boxSize >= 11 && i + boxSize <= data.length) {
+          // Parse AVC configuration
+          // avcC box structure:
+          // - 8 bytes: box header (size + 'avcC')
+          // - 1 byte: configuration version (should be 1)
+          // - 1 byte: AVCProfileIndication
+          // - 1 byte: profile_compatibility
+          // - 1 byte: AVCLevelIndication
+          const configStart = i + 8;
+          if (configStart + 4 <= data.length) {
+            const configVersion = data[configStart];
+            if (configVersion === 1) {
+              const profile = data[configStart + 1].toString(16).padStart(2, '0').toUpperCase();
+              const compat = data[configStart + 2].toString(16).padStart(2, '0').toUpperCase();
+              const level = data[configStart + 3].toString(16).padStart(2, '0').toUpperCase();
+              videoCodec = `avc1.${profile}${compat}${level}`;
+            }
+          }
+        } else if (boxType === 'hvcC' && boxSize >= 23 && i + boxSize <= data.length) {
+          // HEVC configuration - simplified
+          videoCodec = 'hvc1.1.6.L93.90';
+        } else if (boxType === 'esds' && boxSize >= 20 && i + boxSize <= data.length) {
+          // Elementary Stream Descriptor - for AAC
+          // This is a simplified detection
+          audioCodec = 'mp4a.40.2'; // AAC-LC
+        } else if (boxType === 'mp4a' && !audioCodec) {
+          // If we find mp4a sample entry, assume AAC-LC
+          audioCodec = 'mp4a.40.2';
+        }
+      }
+      
+      // Also check for codec indicators in stsd box
+      if (!videoCodec || !audioCodec) {
+        const stsdData = findBox(data, 'stsd');
+        if (stsdData) {
+          // Skip stsd header (8 bytes) + version/flags (4 bytes) + entry count (4 bytes)
+          let offset = 16;
+          while (offset < stsdData.length - 8) {
+            const entrySize = (stsdData[offset] << 24) | (stsdData[offset + 1] << 16) | 
+                             (stsdData[offset + 2] << 8) | stsdData[offset + 3];
+            const entryType = String.fromCharCode(
+              stsdData[offset + 4], stsdData[offset + 5], 
+              stsdData[offset + 6], stsdData[offset + 7]
+            );
+            
+            if (!videoCodec && (entryType === 'avc1' || entryType === 'avc3')) {
+              // Look for avcC within this entry
+              const avcCData = findBox(stsdData.slice(offset, offset + entrySize), 'avcC');
+              if (avcCData && avcCData.length >= 12) {
+                const profile = avcCData[9].toString(16).padStart(2, '0').toUpperCase();
+                const compat = avcCData[10].toString(16).padStart(2, '0').toUpperCase();
+                const level = avcCData[11].toString(16).padStart(2, '0').toUpperCase();
+                videoCodec = `avc1.${profile}${compat}${level}`;
+              } else {
+                videoCodec = 'avc1.42E01E'; // Fallback
+              }
+            } else if (!audioCodec && entryType === 'mp4a') {
+              audioCodec = 'mp4a.40.2'; // AAC-LC fallback
+            }
+            
+            offset += entrySize;
+            if (offset >= stsdData.length) break;
+          }
+        }
+      }
+      
+      return {
+        video: videoCodec,
+        audio: audioCodec,
+        mimeType: videoCodec && audioCodec ? 
+          `video/mp4; codecs="${videoCodec},${audioCodec}"` :
+          videoCodec ? `video/mp4; codecs="${videoCodec}"` :
+          audioCodec ? `audio/mp4; codecs="${audioCodec}"` : null,
+        isMultiplexed: !!(videoCodec && audioCodec),
+        detectionMethod: 'fallback'
+      };
+    }
+  };
+}
+
+// Helper function to find a box in data
+function findBox(data, boxType) {
+  for (let i = 0; i < data.length - 8; i++) {
+    const size = (data[i] << 24) | (data[i + 1] << 16) | (data[i + 2] << 8) | data[i + 3];
+    const type = String.fromCharCode(data[i + 4], data[i + 5], data[i + 6], data[i + 7]);
+    
+    if (type === boxType && size > 0 && i + size <= data.length) {
+      return data.slice(i, i + size);
+    }
+  }
+  return null;
+}
+
+class Mp4BoxUtils {
+  /**
+   * Read a 32-bit unsigned integer from buffer
+   */
+  static readUint32(data, offset) {
+    return (data[offset] << 24) | 
+           (data[offset + 1] << 16) | 
+           (data[offset + 2] << 8) | 
+           data[offset + 3];
   }
 
   /**
-   * Check if segment contains a BJSN box
-   * @param {Uint8Array} segmentData - MP4 segment data
-   * @return {boolean} True if BJSN box is present
+   * Write a 32-bit unsigned integer to buffer
    */
-  static hasBjsnBox(segmentData) {
-    let offset = 0;
-    
-    while (offset < segmentData.length - 8) {
-      // Read box size (4 bytes)
-      const boxSize = (segmentData[offset] << 24) | 
-                     (segmentData[offset + 1] << 16) | 
-                     (segmentData[offset + 2] << 8) | 
-                     segmentData[offset + 3];
-      
-      // Read box type (4 bytes)
-      const boxType = String.fromCharCode(
-        segmentData[offset + 4],
-        segmentData[offset + 5],
-        segmentData[offset + 6],
-        segmentData[offset + 7]
-      );
-      
-      if (boxType === 'bjsn') {
-        return true;
-      }
-      
-      // Move to next box
-      if (boxSize === 0) {
-        break; // Box extends to end of file
-      }
-      
-      offset += boxSize;
-    }
-    
-    return false;
+  static writeUint32(data, offset, value) {
+    data[offset] = (value >> 24) & 0xFF;
+    data[offset + 1] = (value >> 16) & 0xFF;
+    data[offset + 2] = (value >> 8) & 0xFF;
+    data[offset + 3] = value & 0xFF;
   }
 
   /**
-   * Find BJSN box location and size in segment
-   * @param {Uint8Array} segmentData - MP4 segment data
-   * @return {?{start: number, size: number}} BJSN box info
+   * Get box type as string
    */
-  static findBjsnBox(segmentData) {
+  static getBoxType(data, offset) {
+    return String.fromCharCode(
+      data[offset],
+      data[offset + 1],
+      data[offset + 2],
+      data[offset + 3]
+    );
+  }
+
+  /**
+   * Parse all top-level boxes
+   */
+  static parseTopLevelBoxes(data) {
+    const boxes = [];
     let offset = 0;
+
+    while (offset < data.length - 8) {
+      const size = Mp4BoxUtils.readUint32(data, offset);
+      const type = Mp4BoxUtils.getBoxType(data, offset + 4);
+
+      if (size === 0) {
+        boxes.push({
+          type,
+          offset,
+          size: data.length - offset,
+          data: data.slice(offset, data.length)
+        });
+        break;
+      }
+
+      if (size === 1) {
+        console.warn('64-bit box size not supported');
+        break;
+      }
+
+      if (offset + size > data.length) {
+        console.warn('Box size exceeds data length');
+        break;
+      }
+
+      boxes.push({
+        type,
+        offset,
+        size,
+        data: data.slice(offset, offset + size)
+      });
+
+      offset += size;
+    }
+
+    return boxes;
+  }
+
+  /**
+   * Create a new box
+   */
+  static createBox(type, payload) {
+    const box = new Uint8Array(8 + payload.length);
+    Mp4BoxUtils.writeUint32(box, 0, box.length);
+    box[4] = type.charCodeAt(0);
+    box[5] = type.charCodeAt(1);
+    box[6] = type.charCodeAt(2);
+    box[7] = type.charCodeAt(3);
+    box.set(payload, 8);
+    return box;
+  }
+
+  /**
+   * Parse child boxes from a parent box
+   */
+  static parseChildBoxes(parentData) {
+    const boxes = [];
+    let offset = 8; // Skip parent box header
+
+    while (offset < parentData.length - 8) {
+      const size = Mp4BoxUtils.readUint32(parentData, offset);
+      const type = Mp4BoxUtils.getBoxType(parentData, offset + 4);
+
+      if (size === 0 || offset + size > parentData.length) {
+        break;
+      }
+
+      boxes.push({
+        type,
+        offset,
+        size,
+        data: parentData.slice(offset, offset + size)
+      });
+
+      offset += size;
+    }
+
+    return boxes;
+  }
+}
+
+class BjsnMp4Processor {
+  /**
+   * Process BJSN MP4 file and extract components
+   */
+  static processFile(data) {
+    // First, strip BJSN box
+    const strippedData = BjsnMp4Processor.stripBjsnBox(data);
     
-    while (offset < segmentData.length - 8) {
-      // Read box size (4 bytes)
-      const boxSize = (segmentData[offset] << 24) | 
-                     (segmentData[offset + 1] << 16) | 
-                     (segmentData[offset + 2] << 8) | 
-                     segmentData[offset + 3];
-      
-      // Read box type (4 bytes)
-      const boxType = String.fromCharCode(
-        segmentData[offset + 4],
-        segmentData[offset + 5],
-        segmentData[offset + 6],
-        segmentData[offset + 7]
+    // Parse top-level boxes
+    const boxes = Mp4BoxUtils.parseTopLevelBoxes(strippedData);
+    
+    // Find essential boxes
+    const ftypBox = boxes.find(b => b.type === 'ftyp');
+    const moovBox = boxes.find(b => b.type === 'moov');
+    const moofBoxes = boxes.filter(b => b.type === 'moof');
+    const mdatBoxes = boxes.filter(b => b.type === 'mdat');
+
+    if (!ftypBox || !moovBox) {
+      throw new Error('Missing required ftyp or moov box');
+    }
+
+    // Parse tracks from moov
+    const tracks = BjsnMp4Processor.parseTracksFromMoov(moovBox.data);
+    
+    // Create init segments for each track
+    const initSegments = {};
+    tracks.forEach(track => {
+      const initSegment = BjsnMp4Processor.createInitSegmentForTrack(
+        ftypBox.data, 
+        moovBox.data, 
+        track.id,
+        tracks
       );
-      
-      if (boxType === 'bjsn') {
-        return {
-          start: offset,
-          size: boxSize
-        };
+      initSegments[track.type] = {
+        trackId: track.id,
+        data: initSegment
+      };
+    });
+
+    // Group media segments by track
+    const mediaSegments = BjsnMp4Processor.groupMediaSegmentsByTrack(
+      moofBoxes, 
+      mdatBoxes, 
+      tracks
+    );
+
+    return {
+      tracks,
+      initSegments,
+      mediaSegments,
+      originalSize: data.length,
+      strippedSize: strippedData.length
+    };
+  }
+
+  /**
+   * Strip BJSN box from data
+   */
+  static stripBjsnBox(data) {
+    const boxes = Mp4BoxUtils.parseTopLevelBoxes(data);
+    const nonBjsnBoxes = boxes.filter(b => b.type !== 'bjsn');
+    
+    const totalSize = nonBjsnBoxes.reduce((sum, box) => sum + box.data.length, 0);
+    const result = new Uint8Array(totalSize);
+    
+    let offset = 0;
+    nonBjsnBoxes.forEach(box => {
+      result.set(box.data, offset);
+      offset += box.data.length;
+    });
+    
+    return result;
+  }
+
+  /**
+   * Parse tracks from moov box
+   */
+  static parseTracksFromMoov(moovData) {
+    const tracks = [];
+    const moovChildren = Mp4BoxUtils.parseChildBoxes(moovData);
+    
+    moovChildren.forEach(child => {
+      if (child.type === 'trak') {
+        const trackInfo = BjsnMp4Processor.parseTrack(child.data);
+        if (trackInfo) {
+          tracks.push(trackInfo);
+        }
       }
-      
-      // Move to next box
-      if (boxSize === 0) {
-        break; // Box extends to end of file
-      }
-      
-      offset += boxSize;
+    });
+    
+    return tracks;
+  }
+
+  /**
+   * Parse a single track box
+   */
+  static parseTrack(trakData) {
+    let trackId = null;
+    let handlerType = null;
+    
+    const trakChildren = Mp4BoxUtils.parseChildBoxes(trakData);
+    
+    // Find tkhd
+    const tkhdBox = trakChildren.find(b => b.type === 'tkhd');
+    if (tkhdBox) {
+      trackId = BjsnMp4Processor.parseTrackId(tkhdBox.data);
+    }
+    
+    // Find mdia and then hdlr
+    const mdiaBox = trakChildren.find(b => b.type === 'mdia');
+    if (mdiaBox) {
+      handlerType = BjsnMp4Processor.findHandlerType(mdiaBox.data);
+    }
+    
+    if (trackId !== null && handlerType !== null) {
+      return {
+        id: trackId,
+        type: handlerType === 'vide' ? 'video' : 
+              handlerType === 'soun' ? 'audio' : handlerType,
+        handler: handlerType
+      };
     }
     
     return null;
   }
 
   /**
-   * Remove a box from MP4 segment data
-   * @param {Uint8Array} segmentData - Original segment data
-   * @param {{start: number, size: number}} boxInfo - Box to remove
-   * @return {Uint8Array} Segment data without the specified box
+   * Parse track ID from tkhd box
    */
-  static removeBox(segmentData, boxInfo) {
-    const beforeBox = segmentData.slice(0, boxInfo.start);
-    const afterBox = segmentData.slice(boxInfo.start + boxInfo.size);
+  static parseTrackId(tkhdData) {
+    const version = tkhdData[8];
+    const timeSkip = version === 1 ? 16 : 8;
+    const trackIdOffset = 12 + timeSkip;
     
-    // Combine the parts before and after the BJSN box
-    const strippedData = new Uint8Array(beforeBox.length + afterBox.length);
-    strippedData.set(beforeBox, 0);
-    strippedData.set(afterBox, beforeBox.length);
+    if (trackIdOffset + 4 <= tkhdData.length) {
+      return Mp4BoxUtils.readUint32(tkhdData, trackIdOffset);
+    }
     
-    return strippedData;
+    return null;
   }
 
   /**
-   * Get detailed info about BJSN box for debugging
-   * @param {Uint8Array} segmentData - MP4 segment data
-   * @return {?Object} Detailed BJSN box information
+   * Find handler type in mdia box
    */
-  static getBjsnBoxInfo(segmentData) {
-    const bjsnBoxInfo = BjsnBoxStripper.findBjsnBox(segmentData);
-    if (!bjsnBoxInfo) {
+  static findHandlerType(mdiaData) {
+    const mdiaChildren = Mp4BoxUtils.parseChildBoxes(mdiaData);
+    const hdlrBox = mdiaChildren.find(b => b.type === 'hdlr');
+    
+    if (hdlrBox && hdlrBox.data.length >= 20) {
+      const handlerType = Mp4BoxUtils.getBoxType(hdlrBox.data, 16);
+      return handlerType;
+    }
+    
+    return null;
+  }
+
+  /**
+   * Create init segment for a specific track
+   */
+  static createInitSegmentForTrack(ftypData, moovData, trackId, allTracks) {
+    const filteredMoov = BjsnMp4Processor.filterMoovForTrack(moovData, trackId, allTracks);
+    
+    const initSegment = new Uint8Array(ftypData.length + filteredMoov.length);
+    initSegment.set(ftypData, 0);
+    initSegment.set(filteredMoov, ftypData.length);
+    
+    return initSegment;
+  }
+
+  /**
+   * Filter moov box to include only specified track
+   */
+  static filterMoovForTrack(moovData, trackId, allTracks) {
+    const moovChildren = Mp4BoxUtils.parseChildBoxes(moovData);
+    const filteredChildren = [];
+    
+    moovChildren.forEach(child => {
+      if (child.type === 'mvhd') {
+        // Keep movie header
+        filteredChildren.push(child.data);
+      } else if (child.type === 'trak') {
+        // Check if this is the track we want
+        const trakId = BjsnMp4Processor.getTrackIdFromTrak(child.data);
+        if (trakId === trackId) {
+          filteredChildren.push(child.data);
+        }
+      } else if (child.type === 'mvex') {
+        // Filter mvex to only include trex for our track
+        const filteredMvex = BjsnMp4Processor.filterMvexForTrack(child.data, trackId);
+        if (filteredMvex) {
+          filteredChildren.push(filteredMvex);
+        }
+      } else {
+        // Keep other boxes
+        filteredChildren.push(child.data);
+      }
+    });
+    
+    // Reconstruct moov box
+    const payloadSize = filteredChildren.reduce((sum, child) => sum + child.length, 0);
+    const payload = new Uint8Array(payloadSize);
+    let offset = 0;
+    filteredChildren.forEach(child => {
+      payload.set(child, offset);
+      offset += child.length;
+    });
+    
+    return Mp4BoxUtils.createBox('moov', payload);
+  }
+
+  /**
+   * Get track ID from trak box
+   */
+  static getTrackIdFromTrak(trakData) {
+    const trakChildren = Mp4BoxUtils.parseChildBoxes(trakData);
+    const tkhdBox = trakChildren.find(b => b.type === 'tkhd');
+    
+    if (tkhdBox) {
+      return BjsnMp4Processor.parseTrackId(tkhdBox.data);
+    }
+    
+    return null;
+  }
+
+  /**
+   * Filter mvex box for specific track
+   */
+  static filterMvexForTrack(mvexData, trackId) {
+    const mvexChildren = Mp4BoxUtils.parseChildBoxes(mvexData);
+    const filteredChildren = [];
+    
+    mvexChildren.forEach(child => {
+      if (child.type === 'mehd') {
+        filteredChildren.push(child.data);
+      } else if (child.type === 'trex') {
+        if (child.data.length >= 20) {
+          const trexTrackId = Mp4BoxUtils.readUint32(child.data, 12);
+          if (trexTrackId === trackId) {
+            filteredChildren.push(child.data);
+          }
+        }
+      }
+    });
+    
+    if (filteredChildren.length === 0) {
+      return null;
+    }
+    
+    const payloadSize = filteredChildren.reduce((sum, child) => sum + child.length, 0);
+    const payload = new Uint8Array(payloadSize);
+    let offset = 0;
+    filteredChildren.forEach(child => {
+      payload.set(child, offset);
+      offset += child.length;
+    });
+    
+    return Mp4BoxUtils.createBox('mvex', payload);
+  }
+
+  /**
+   * Group media segments by track
+   */
+  static groupMediaSegmentsByTrack(moofBoxes, mdatBoxes, tracks) {
+    const result = {
+      video: [],
+      audio: []
+    };
+    
+    moofBoxes.forEach((moofBox, index) => {
+      if (index < mdatBoxes.length) {
+        const mdatBox = mdatBoxes[index];
+        const trackId = BjsnMp4Processor.getTrackIdFromMoof(moofBox.data);
+        
+        if (trackId !== null) {
+          const track = tracks.find(t => t.id === trackId);
+          if (track) {
+            const segment = new Uint8Array(moofBox.data.length + mdatBox.data.length);
+            segment.set(moofBox.data, 0);
+            segment.set(mdatBox.data, moofBox.data.length);
+            
+            if (track.type === 'video') {
+              result.video.push(segment);
+            } else if (track.type === 'audio') {
+              result.audio.push(segment);
+            }
+          }
+        }
+      }
+    });
+    
+    return result;
+  }
+
+  /**
+   * Get track ID from moof box
+   */
+  static getTrackIdFromMoof(moofData) {
+    const moofChildren = Mp4BoxUtils.parseChildBoxes(moofData);
+    const trafBox = moofChildren.find(b => b.type === 'traf');
+    
+    if (trafBox) {
+      return BjsnMp4Processor.getTrackIdFromTraf(trafBox.data);
+    }
+    
+    return null;
+  }
+
+  /**
+   * Get track ID from traf box
+   */
+  static getTrackIdFromTraf(trafData) {
+    const trafChildren = Mp4BoxUtils.parseChildBoxes(trafData);
+    const tfhdBox = trafChildren.find(b => b.type === 'tfhd');
+    
+    if (tfhdBox && tfhdBox.data.length >= 16) {
+      const trackId = Mp4BoxUtils.readUint32(tfhdBox.data, 12);
+      return trackId;
+    }
+    
+    return null;
+  }
+
+  /**
+   * Get BJSN info from data
+   */
+  static getBjsnInfo(data) {
+    const boxes = Mp4BoxUtils.parseTopLevelBoxes(data);
+    const bjsnBox = boxes.find(b => b.type === 'bjsn');
+    
+    if (!bjsnBox) {
       return null;
     }
     
     try {
-      // Extract the JSON payload from the BJSN box
-      const payloadStart = bjsnBoxInfo.start + 8; // Skip 4-byte size + 4-byte type
-      const payloadEnd = bjsnBoxInfo.start + bjsnBoxInfo.size;
-      const payload = segmentData.slice(payloadStart, payloadEnd);
-      
+      const payload = bjsnBox.data.slice(8);
       const jsonString = new TextDecoder('utf-8').decode(payload);
       const jsonData = JSON.parse(jsonString);
       
       return {
-        start: bjsnBoxInfo.start,
-        size: bjsnBoxInfo.size,
-        payloadSize: payload.length,
-        jsonData: jsonData
+        offset: bjsnBox.offset,
+        size: bjsnBox.size,
+        data: jsonData
       };
     } catch (error) {
       return {
-        start: bjsnBoxInfo.start,
-        size: bjsnBoxInfo.size,
+        offset: bjsnBox.offset,
+        size: bjsnBox.size,
         error: error.message
       };
-    }
-  }
-
-  /**
-   * Strip BJSN, MOOV, and FTYP boxes from MP4 segment data
-   * @param {Uint8Array} segmentData - Original segment data
-   * @return {Uint8Array} Clean MP4 data without BJSN, MOOV, and FTYP boxes
-   */
-  static stripBjsnAndMoovBoxes(segmentData) {
-    try {
-      let offset = 0;
-      const result = [];
-
-      while (offset < segmentData.length - 8) {
-        // Read box size (4 bytes)
-        const boxSize = (segmentData[offset] << 24) | 
-                       (segmentData[offset + 1] << 16) | 
-                       (segmentData[offset + 2] << 8) | 
-                       segmentData[offset + 3];
-        
-        // Read box type (4 bytes)
-        const boxType = String.fromCharCode(
-          segmentData[offset + 4],
-          segmentData[offset + 5],
-          segmentData[offset + 6],
-          segmentData[offset + 7]
-        );
-
-        if (boxType === 'bjsn' || boxType === 'moov' || boxType === 'ftyp') {
-          // Skip BJSN, MOOV, and FTYP boxes entirely
-          console.log('🔧 BJSN BOX STRIPPER: Skipping', boxType, 'box at offset', offset);
-          offset += boxSize;
-          continue;
-        }
-
-        // Copy non-BJSN/MOOV/FTYP box
-        const boxEnd = offset + boxSize;
-        if (boxEnd <= segmentData.length) {
-          result.push(segmentData.slice(offset, boxEnd));
-          offset = boxEnd;
-        } else {
-          // Incomplete box at end
-          result.push(segmentData.slice(offset));
-          break;
-        }
-      }
-
-      // Concatenate all remaining boxes
-      const totalLength = result.reduce((sum, chunk) => sum + chunk.length, 0);
-      const cleanData = new Uint8Array(totalLength);
-      let position = 0;
-
-      for (const chunk of result) {
-        cleanData.set(chunk, position);
-        position += chunk.length;
-      }
-
-      return cleanData;
-    } catch (error) {
-      console.error('🔧 BJSN BOX STRIPPER: Failed to strip BJSN and MOOV boxes:', error.message);
-      return segmentData; // Return original data if stripping fails
     }
   }
 }
@@ -263,30 +618,36 @@ class BjsnBoxStripper {
 // CLI functionality
 function showUsage() {
   console.log(`
-BJSN Box Stripper CLI Tool
-=========================
+BJSN MP4 Processor - Enhanced Version
+=====================================
 
-Usage: node bjsn-stripper-cli.js [options] <input-file> [output-file]
+Usage: node bjsn-stripper-cli.js [options] <input-file> [output-prefix]
 
 Options:
   -h, --help          Show this help message
-  -i, --info          Show BJSN box info without stripping
-  -a, --all           Strip BJSN, MOOV, and FTYP boxes
+  -i, --info          Show BJSN box info and file structure
+  -s, --split         Split into separate init and media segments
+  -c, --codec         Detect and display codec information
   -v, --verbose       Verbose output
 
 Arguments:
   input-file          Input MP4 file path
-  output-file         Output MP4 file path (optional, defaults to input_stripped.mp4)
+  output-prefix       Output file prefix (defaults to input filename)
+
+Output Files (split mode):
+  <prefix>_video_init.mp4   - Video track init segment (ftyp + filtered moov)
+  <prefix>_audio_init.mp4   - Audio track init segment (ftyp + filtered moov)
+  <prefix>_video_media.mp4  - All video media segments (moof + mdat pairs)
+  <prefix>_audio_media.mp4  - All audio media segments (moof + mdat pairs)
 
 Examples:
-  node bjsn-stripper-cli.js input.mp4 output.mp4
-  node bjsn-stripper-cli.js input.mp4  # Creates input_stripped.mp4
-  node bjsn-stripper-cli.js --info input.mp4  # Show BJSN box info
-  node bjsn-stripper-cli.js --all input.mp4 output.mp4  # Strip multiple box types
+  node bjsn-stripper-cli.js --info input.mp4
+  node bjsn-stripper-cli.js --split input.mp4
+  node bjsn-stripper-cli.js --split --codec input.mp4 output
 `);
 }
 
-function main() {
+async function main() {
   const args = process.argv.slice(2);
   
   if (args.length === 0 || args.includes('-h') || args.includes('--help')) {
@@ -295,9 +656,10 @@ function main() {
   }
 
   let inputFile = '';
-  let outputFile = '';
+  let outputPrefix = '';
   let showInfo = false;
-  let stripAll = false;
+  let splitMode = false;
+  let detectCodec = false;
   let verbose = false;
 
   // Parse arguments
@@ -306,14 +668,16 @@ function main() {
     
     if (arg === '-i' || arg === '--info') {
       showInfo = true;
-    } else if (arg === '-a' || arg === '--all') {
-      stripAll = true;
+    } else if (arg === '-s' || arg === '--split') {
+      splitMode = true;
+    } else if (arg === '-c' || arg === '--codec') {
+      detectCodec = true;
     } else if (arg === '-v' || arg === '--verbose') {
       verbose = true;
     } else if (!inputFile) {
       inputFile = arg;
-    } else if (!outputFile) {
-      outputFile = arg;
+    } else if (!outputPrefix) {
+      outputPrefix = arg;
     }
   }
 
@@ -323,70 +687,115 @@ function main() {
     process.exit(1);
   }
 
-  // Check if input file exists
   if (!fs.existsSync(inputFile)) {
     console.error('❌ Error: Input file does not exist:', inputFile);
     process.exit(1);
   }
 
-  // Set default output file if not provided
-  if (!outputFile && !showInfo) {
+  if (!outputPrefix) {
     const parsedPath = path.parse(inputFile);
-    outputFile = path.join(parsedPath.dir, parsedPath.name + '_stripped' + parsedPath.ext);
+    outputPrefix = path.join(parsedPath.dir, parsedPath.name);
   }
 
   console.log('📁 Processing file:', inputFile);
   
   try {
-    // Read input file
     const inputData = fs.readFileSync(inputFile);
-    const segmentData = new Uint8Array(inputData);
+    const data = new Uint8Array(inputData);
     
     if (showInfo) {
-      // Show BJSN box information
-      const bjsnInfo = BjsnBoxStripper.getBjsnBoxInfo(segmentData);
+      console.log('\n📊 File Information:');
+      console.log('  Size:', data.length, 'bytes');
+      
+      const bjsnInfo = BjsnMp4Processor.getBjsnInfo(data);
       if (bjsnInfo) {
-        console.log('\n📊 BJSN Box Information:');
-        console.log('  Position:', bjsnInfo.start);
+        console.log('\n📊 BJSN Box:');
+        console.log('  Offset:', bjsnInfo.offset);
         console.log('  Size:', bjsnInfo.size, 'bytes');
-        console.log('  Payload Size:', bjsnInfo.payloadSize, 'bytes');
-        
-        if (bjsnInfo.jsonData) {
-          console.log('  JSON Data:', JSON.stringify(bjsnInfo.jsonData, null, 2));
+        if (bjsnInfo.data) {
+          console.log('  Data:', JSON.stringify(bjsnInfo.data, null, 2));
         } else if (bjsnInfo.error) {
-          console.log('  Parse Error:', bjsnInfo.error);
+          console.log('  Error:', bjsnInfo.error);
         }
       } else {
-        console.log('  ℹ️ No BJSN box found in file');
+        console.log('\n  ℹ️ No BJSN box found');
       }
+      
+      const processed = BjsnMp4Processor.processFile(data);
+      console.log('\n📊 Tracks:');
+      processed.tracks.forEach(track => {
+        console.log(`  Track ${track.id}: ${track.type} (${track.handler})`);
+      });
+      
+      if (detectCodec) {
+        const strippedData = BjsnMp4Processor.stripBjsnBox(data);
+        const codecInfo = await BjsnCodecDetector.detectCodecsFromSegment(strippedData);
+        console.log('\n📊 Codecs:');
+        console.log('  Video:', codecInfo.video || 'Not detected');
+        console.log('  Audio:', codecInfo.audio || 'Not detected');
+        if (codecInfo.mimeType) {
+          console.log('  MIME:', codecInfo.mimeType);
+        }
+        console.log('  Detection method:', codecInfo.detectionMethod);
+      }
+      
       return;
     }
 
-    // Strip BJSN boxes
-    let strippedData;
-    if (stripAll) {
-      strippedData = BjsnBoxStripper.stripBjsnAndMoovBoxes(segmentData);
+    console.log('\n🔧 Processing MP4 file...');
+    const processed = BjsnMp4Processor.processFile(data);
+    
+    console.log('  ✅ BJSN box removed');
+    console.log('  📊 Size reduction:', data.length - processed.strippedSize, 'bytes');
+    console.log('  📊 Found', processed.tracks.length, 'tracks');
+    
+    if (splitMode) {
+      console.log('\n🔪 Creating separate segments...');
+      
+      // Write init segments
+      for (const [type, segment] of Object.entries(processed.initSegments)) {
+        const filename = `${outputPrefix}_${type}_init.mp4`;
+        fs.writeFileSync(filename, segment.data);
+        console.log(`  ✅ Created ${filename} (${segment.data.length} bytes, Track ${segment.trackId})`);
+      }
+      
+      // Write media segments
+      for (const [type, segments] of Object.entries(processed.mediaSegments)) {
+        if (segments.length > 0) {
+          const totalSize = segments.reduce((sum, seg) => sum + seg.length, 0);
+          const combined = new Uint8Array(totalSize);
+          let offset = 0;
+          segments.forEach(seg => {
+            combined.set(seg, offset);
+            offset += seg.length;
+          });
+          
+          const filename = `${outputPrefix}_${type}_media.mp4`;
+          fs.writeFileSync(filename, combined);
+          console.log(`  ✅ Created ${filename} (${combined.length} bytes, ${segments.length} segments)`);
+        }
+      }
+      
+      if (detectCodec) {
+        console.log('\n🔍 Detecting codecs...');
+        const strippedData = BjsnMp4Processor.stripBjsnBox(data);
+        const codecInfo = await BjsnCodecDetector.detectCodecsFromSegment(strippedData);
+        console.log('  Video codec:', codecInfo.video || 'Not detected');
+        console.log('  Audio codec:', codecInfo.audio || 'Not detected');
+        console.log('  Detection method:', codecInfo.detectionMethod);
+      }
     } else {
-      strippedData = BjsnBoxStripper.stripBjsnBox(segmentData);
-    }
-
-    // Write output file
-    fs.writeFileSync(outputFile, strippedData);
-    
-    console.log('\n✅ Success!');
-    console.log('  📄 Output file:', outputFile);
-    console.log('  📏 Original size:', segmentData.length, 'bytes');
-    console.log('  📏 Stripped size:', strippedData.length, 'bytes');
-    console.log('  📊 Size reduction:', segmentData.length - strippedData.length, 'bytes');
-    
-    if (verbose) {
-      console.log('\n🔍 Detailed Analysis:');
-      console.log('  BJSN box present:', BjsnBoxStripper.hasBjsnBox(segmentData));
-      console.log('  BJSN box present after stripping:', BjsnBoxStripper.hasBjsnBox(strippedData));
+      const strippedData = BjsnMp4Processor.stripBjsnBox(data);
+      const outputFile = `${outputPrefix}_stripped.mp4`;
+      fs.writeFileSync(outputFile, strippedData);
+      console.log(`\n✅ Created ${outputFile} (${strippedData.length} bytes)`);
     }
     
   } catch (error) {
-    console.error('❌ Error processing file:', error.message);
+    console.error('❌ Error:', error.message);
+    if (verbose) {
+      console.error(error.stack);
+    }
     process.exit(1);
   }
 }
@@ -396,4 +805,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { BjsnBoxStripper };
+module.exports = { BjsnMp4Processor, Mp4BoxUtils };
