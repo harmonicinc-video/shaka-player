@@ -79,12 +79,31 @@
       const urlInput = document.getElementById('urlInput');
       const loadButton = document.getElementById('loadButton');
       let activeSession = null;
+      const MAX_LOG_LINES = 200; // Cap the log to prevent performance issues
 
       function log(message, ...args) {
         console.log(message, ...args);
         const text = [message, ...args.map(arg => JSON.stringify(arg, null, 2))].join(' ');
-        logElement.textContent += text + '\n';
+        
+        let lines = logElement.textContent.split('\n');
+        lines.push(text);
+        if (lines.length > MAX_LOG_LINES) {
+          lines = lines.slice(lines.length - MAX_LOG_LINES);
+        }
+        logElement.textContent = lines.join('\n');
+
         logElement.scrollTop = logElement.scrollHeight;
+      }
+
+      function formatTimeRanges(ranges) {
+        if (!ranges || ranges.length === 0) {
+            return '[]';
+        }
+        const parts = [];
+        for (let i = 0; i < ranges.length; i++) {
+            parts.push(`[${ranges.start(i).toFixed(2)} - ${ranges.end(i).toFixed(2)}]`);
+        }
+        return `(${ranges.length}) ${parts.join(', ')}`;
       }
 
       if (!window.MediaSource) {
@@ -361,6 +380,7 @@
           this.initialUrl = initialUrl;
           this.ms = new MediaSource();
           this.fetchInterval = null;
+          this.logInterval = null;
           this.isActive = true;
         }
 
@@ -372,8 +392,12 @@
         stop() {
           this.isActive = false;
           if (this.fetchInterval) {
-            clearInterval(this.fetchInterval);
+            clearTimeout(this.fetchInterval);
             this.fetchInterval = null;
+          }
+          if (this.logInterval) {
+            clearInterval(this.logInterval);
+            this.logInterval = null;
           }
           try {
             if (this.ms && this.ms.readyState === 'open') {
@@ -446,6 +470,16 @@
             const videoSourceBuffer = this.ms.addSourceBuffer(`video/mp4; codecs="${videoCodec}"`);
             const audioSourceBuffer = this.ms.addSourceBuffer(`audio/mp4; codecs="${audioCodec}"`);
 
+            this.logInterval = setInterval(() => {
+              if (!this.isActive) return;
+              try {
+                log('Video Buffer:', formatTimeRanges(videoSourceBuffer.buffered));
+                log('Audio Buffer:', formatTimeRanges(audioSourceBuffer.buffered));
+              } catch (e) {
+                log('Error logging buffer state:', e.message);
+              }
+            }, 2000);
+
             const appendQueue = [];
             let isAppending = false;
             let initialSegmentsAppended = false;
@@ -511,6 +545,7 @@
               if (!this.isActive) return;
 
               const startTime = Date.now();
+              let fetchSuccess = false;
               currentSeqNum++;
               const nextSegmentFile = templateUrl.replace('${num}', currentSeqNum);
               const nextUrl = new URL(nextSegmentFile, baseUrl).href;
@@ -527,15 +562,22 @@
                 if (nextProcessed.mediaSegments[audioTrack.id]) {
                   nextProcessed.mediaSegments[audioTrack.id].forEach(seg => addToQueue(audioSourceBuffer, seg));
                 }
+                fetchSuccess = true;
               } catch (e) {
                 log('Failed to fetch segment', currentSeqNum, e.message);
                 currentSeqNum--;
               } finally {
                 if (this.isActive) {
-                  const endTime = Date.now();
-                  const duration = endTime - startTime;
-                  const delay = Math.max(0, segmentDurationMs - duration);
-                  log(`Fetch/process took ${duration}ms, next fetch in ${delay}ms`);
+                  let delay;
+                  if (fetchSuccess) {
+                    const endTime = Date.now();
+                    const duration = endTime - startTime;
+                    delay = Math.max(0, segmentDurationMs - duration);
+                    log(`Fetch/process took ${duration}ms, next fetch in ${delay}ms`);
+                  } else {
+                    delay = 100; // Retry after 100ms on failure
+                    log(`Fetch failed, retrying in ${delay}ms`);
+                  }
                   scheduleNextFetch(delay);
                 }
               }
