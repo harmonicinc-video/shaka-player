@@ -469,6 +469,8 @@
             if (!this.isActive || this.ms.readyState !== 'open') return;
             const videoSourceBuffer = this.ms.addSourceBuffer(`video/mp4; codecs="${videoCodec}"`);
             const audioSourceBuffer = this.ms.addSourceBuffer(`audio/mp4; codecs="${audioCodec}"`);
+            videoSourceBuffer.mode = 'sequence';
+            audioSourceBuffer.mode = 'sequence';
 
             this.logInterval = setInterval(() => {
               if (!this.isActive) return;
