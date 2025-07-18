@@ -24,7 +24,7 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
   beforeEach(() => {
     networkingEngine = new shaka.test.FakeNetworkingEngine();
     parser = new BjsnManifestParser();
-    
+
     playerInterface = {
       networkingEngine: networkingEngine,
       onError: fail,
@@ -82,13 +82,13 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
         gear_list: [{
           'hd': {
             realtime_bitrate: 2000000,
-            drm: null
-          }
-        }]
+            drm: null,
+          },
+        }],
       };
 
       const bjsnSegmentData = createBjsnSegmentWithH264Aac(bjsnData);
-      
+
       // Mock network response
       networkingEngine.setResponseValue('test-manifest.mp4', bjsnSegmentData);
 
@@ -107,7 +107,7 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
       // Verify dynamic codec detection worked
       expect(variant.video.codecs).toMatch(/^avc1\./);
       expect(variant.video.fullMimeTypes.size).toBe(1);
-      
+
       const videoMimeType = Array.from(variant.video.fullMimeTypes)[0];
       expect(videoMimeType).toContain('video/mp4');
       expect(videoMimeType).toContain('avc1');
@@ -122,14 +122,14 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
         template_path: 'segment-${num}.mp4',
         gear_list: [{
           'hd': {
-            realtime_bitrate: 2000000
-          }
-        }]
+            realtime_bitrate: 2000000,
+          },
+        }],
       };
 
       // Create segment with invalid MP4 data after BJSN box
       const invalidSegment = createBjsnSegmentWithInvalidMp4(bjsnData);
-      
+
       networkingEngine.setResponseValue('test-manifest.mp4', invalidSegment);
 
       // Parse manifest - should use fallback codecs
@@ -150,9 +150,9 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
         template_path: 'segment-${num}.mp4',
         gear_list: [{
           'hd': {
-            realtime_bitrate: 2000000
-          }
-        }]
+            realtime_bitrate: 2000000,
+          },
+        }],
       };
 
       const bjsnSegment = createBjsnSegmentWithH264Aac(bjsnData);
@@ -172,20 +172,20 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
         uri: 'segment-1.mp4',
         data: segmentWithBjsn,
         headers: {},
-        status: 200
+        status: 200,
       };
 
       // Apply the response filter
       const responseFilter = filters[filters.length - 1]; // Get the BJSN filter
       await responseFilter(
-        shaka.net.NetworkingEngine.RequestType.SEGMENT,
-        mockResponse,
-        {}
+          shaka.net.NetworkingEngine.RequestType.SEGMENT,
+          mockResponse,
+          {},
       );
 
       // Verify BJSN box was stripped
       expect(mockResponse.data.byteLength).toBeLessThan(originalSize);
-      
+
       // Verify the stripped data is valid MP4
       const strippedData = new Uint8Array(mockResponse.data);
       expect(BjsnBoxStripper.needsStripping(strippedData)).toBe(false);
@@ -194,7 +194,7 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
     it('validates detected codecs against MediaSource API', async () => {
       // Mock MediaSource API
       window.MediaSource = {
-        isTypeSupported: jasmine.createSpy('isTypeSupported').and.returnValue(true)
+        isTypeSupported: jasmine.createSpy('isTypeSupported').and.returnValue(true),
       };
 
       const bjsnData = {
@@ -204,9 +204,9 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
         template_path: 'segment-${num}.mp4',
         gear_list: [{
           'hd': {
-            realtime_bitrate: 2000000
-          }
-        }]
+            realtime_bitrate: 2000000,
+          },
+        }],
       };
 
       const bjsnSegment = createBjsnSegmentWithH264Aac(bjsnData);
@@ -216,7 +216,7 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
 
       // Verify MediaSource.isTypeSupported was called
       expect(window.MediaSource.isTypeSupported).toHaveBeenCalled();
-      
+
       const calledWith = window.MediaSource.isTypeSupported.calls.mostRecent().args[0];
       expect(calledWith).toContain('video/mp4');
       expect(calledWith).toContain('codecs=');
@@ -232,9 +232,9 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
         template_path: 'segment-${num}.mp4',
         gear_list: [{
           'hd': {
-            realtime_bitrate: 2000000
-          }
-        }]
+            realtime_bitrate: 2000000,
+          },
+        }],
       };
 
       const bjsnSegment = createBjsnSegmentWithH264Aac(bjsnData);
@@ -261,10 +261,10 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
     const bjsnJson = JSON.stringify(bjsnData);
     const bjsnJsonBytes = shaka.util.StringUtils.toUTF8(bjsnJson);
     const bjsnBoxSize = 8 + bjsnJsonBytes.length;
-    
+
     const bjsnBox = new Uint8Array(bjsnBoxSize);
     const view = new DataView(bjsnBox.buffer);
-    
+
     // Write BJSN box header
     view.setUint32(0, bjsnBoxSize); // size
     bjsnBox.set([0x62, 0x6A, 0x73, 0x6E], 4); // 'bjsn'
@@ -286,10 +286,10 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
     const bjsnJson = JSON.stringify(bjsnData);
     const bjsnJsonBytes = shaka.util.StringUtils.toUTF8(bjsnJson);
     const bjsnBoxSize = 8 + bjsnJsonBytes.length;
-    
+
     const bjsnBox = new Uint8Array(bjsnBoxSize);
     const view = new DataView(bjsnBox.buffer);
-    
+
     view.setUint32(0, bjsnBoxSize);
     bjsnBox.set([0x62, 0x6A, 0x73, 0x6E], 4);
     bjsnBox.set(bjsnJsonBytes, 8);
@@ -315,7 +315,7 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
       0x69, 0x73, 0x6F, 0x6D, // compatible_brands[0]
       0x69, 0x73, 0x6F, 0x32, // compatible_brands[1]
       0x61, 0x76, 0x63, 0x31, // compatible_brands[2]
-      0x6D, 0x70, 0x34, 0x31  // compatible_brands[3]
+      0x6D, 0x70, 0x34, 0x31,  // compatible_brands[3]
     ]);
 
     // Simplified MOOV box with video and audio tracks
@@ -324,7 +324,7 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
       0x00, 0x00, 0x01, 0x00, // size = 256
       0x6D, 0x6F, 0x6F, 0x76, // 'moov'
     ], 0);
-    
+
     // Fill with minimal structure that codec detector can parse
     // This would be more complex in a real implementation
 
