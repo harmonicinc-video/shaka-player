@@ -78,7 +78,7 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
         type: 'static',
         gear_num: 1,
         seq_num: 1,
-        template_path: 'segment-${num}.mp4',
+        template_path: `segment-\${num}.mp4`,
         gear_list: [{
           'hd': {
             realtime_bitrate: 2000000,
@@ -111,7 +111,8 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
       const videoMimeType = Array.from(variant.video.fullMimeTypes)[0];
       expect(videoMimeType).toContain('video/mp4');
       expect(videoMimeType).toContain('avc1');
-      expect(videoMimeType).toContain('mp4a'); // Should include audio codec for muxed content
+      // Should include audio codec for muxed content
+      expect(videoMimeType).toContain('mp4a');
     });
 
     it('handles codec detection failure gracefully', async () => {
@@ -119,7 +120,7 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
         type: 'static',
         gear_num: 1,
         seq_num: 1,
-        template_path: 'segment-${num}.mp4',
+        template_path: `segment-\${num}.mp4`,
         gear_list: [{
           'hd': {
             realtime_bitrate: 2000000,
@@ -139,7 +140,8 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
       expect(manifest.variants.length).toBe(1);
 
       const variant = manifest.variants[0];
-      expect(variant.video.codecs).toBe('avc1.42E01E,mp4a.40.2'); // Fallback codecs
+      expect(variant.video.codecs).toBe('avc1.42E01E,mp4a.40.2');
+      // Fallback codecs
     });
 
     it('sets up BJSN response filter for automatic stripping', async () => {
@@ -147,7 +149,7 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
         type: 'static',
         gear_num: 1,
         seq_num: 1,
-        template_path: 'segment-${num}.mp4',
+        template_path: `segment-\${num}.mp4`,
         gear_list: [{
           'hd': {
             realtime_bitrate: 2000000,
@@ -194,14 +196,15 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
     it('validates detected codecs against MediaSource API', async () => {
       // Mock MediaSource API
       window.MediaSource = {
-        isTypeSupported: jasmine.createSpy('isTypeSupported').and.returnValue(true),
+        isTypeSupported: jasmine.createSpy('isTypeSupported')
+            .and.returnValue(true),
       };
 
       const bjsnData = {
         type: 'static',
         gear_num: 1,
         seq_num: 1,
-        template_path: 'segment-${num}.mp4',
+        template_path: `segment-\${num}.mp4`,
         gear_list: [{
           'hd': {
             realtime_bitrate: 2000000,
@@ -217,7 +220,8 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
       // Verify MediaSource.isTypeSupported was called
       expect(window.MediaSource.isTypeSupported).toHaveBeenCalled();
 
-      const calledWith = window.MediaSource.isTypeSupported.calls.mostRecent().args[0];
+      const calledWith = window.MediaSource.isTypeSupported.calls
+          .mostRecent().args[0];
       expect(calledWith).toContain('video/mp4');
       expect(calledWith).toContain('codecs=');
 
@@ -229,7 +233,7 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
         type: 'static',
         gear_num: 1,
         seq_num: 1,
-        template_path: 'segment-${num}.mp4',
+        template_path: `segment-\${num}.mp4`,
         gear_list: [{
           'hd': {
             realtime_bitrate: 2000000,
@@ -241,12 +245,14 @@ describe('BJSN Dynamic Codec Detection Integration', () => {
       networkingEngine.setResponseValue('test-manifest.mp4', bjsnSegment);
 
       // Spy on codec detection
-      spyOn(BjsnCodecDetector, 'detectCodecsFromSegment').and.callThrough();
+      spyOn(BjsnCodecDetector, 'detectCodecsFromSegment')
+          .and.callThrough();
 
       await parser.start('test-manifest.mp4', playerInterface);
 
       // Verify codec detection was called once
-      expect(BjsnCodecDetector.detectCodecsFromSegment).toHaveBeenCalledTimes(1);
+      expect(BjsnCodecDetector.detectCodecsFromSegment)
+          .toHaveBeenCalledTimes(1);
 
       // Verify caching worked (check internal state)
       expect(parser.detectedCodecs_).toBeTruthy();

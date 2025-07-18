@@ -17,7 +17,8 @@ describe('BjsnCodecDetector', () => {
       // Create a minimal MP4 init segment with H.264 + AAC
       const initSegment = createH264AacInitSegment();
 
-      const codecInfo = await BjsnCodecDetector.detectCodecsFromSegment(initSegment);
+      const codecInfo = await BjsnCodecDetector
+          .detectCodecsFromSegment(initSegment);
 
       expect(codecInfo.video).toMatch(/^avc1\./);
       expect(codecInfo.audio).toMatch(/^mp4a\./);
@@ -32,7 +33,8 @@ describe('BjsnCodecDetector', () => {
       // Create a minimal MP4 media segment (moof + mdat)
       const mediaSegment = createMediaSegment();
 
-      const codecInfo = await BjsnCodecDetector.detectCodecsFromSegment(mediaSegment);
+      const codecInfo = await BjsnCodecDetector
+          .detectCodecsFromSegment(mediaSegment);
 
       expect(codecInfo.video).toBe('avc1.42E01E');
       expect(codecInfo.audio).toBe('mp4a.40.2');
@@ -44,7 +46,8 @@ describe('BjsnCodecDetector', () => {
       // Create invalid MP4 data
       const invalidData = new Uint8Array([0x00, 0x01, 0x02, 0x03]);
 
-      const codecInfo = await BjsnCodecDetector.detectCodecsFromSegment(invalidData);
+      const codecInfo = await BjsnCodecDetector
+          .detectCodecsFromSegment(invalidData);
 
       expect(codecInfo.video).toBe('avc1.42E01E');
       expect(codecInfo.audio).toBe('mp4a.40.2');
@@ -56,7 +59,8 @@ describe('BjsnCodecDetector', () => {
     beforeEach(() => {
       // Mock MediaSource API
       window.MediaSource = {
-        isTypeSupported: jasmine.createSpy('isTypeSupported').and.returnValue(true),
+        isTypeSupported: jasmine.createSpy('isTypeSupported')
+            .and.returnValue(true),
       };
     });
 
@@ -70,7 +74,8 @@ describe('BjsnCodecDetector', () => {
       const isSupported = BjsnCodecDetector.validateCodecSupport(mimeType);
 
       expect(isSupported).toBe(true);
-      expect(window.MediaSource.isTypeSupported).toHaveBeenCalledWith(mimeType);
+      expect(window.MediaSource.isTypeSupported)
+          .toHaveBeenCalledWith(mimeType);
     });
 
     it('rejects unsupported codecs', () => {
@@ -108,7 +113,8 @@ describe('BjsnCodecDetector', () => {
         isTypeSupported: () => true,
       };
 
-      const result = BjsnCodecDetector.createDetectionResult(segmentUrl, codecInfo);
+      const result = BjsnCodecDetector.createDetectionResult(segmentUrl,
+          codecInfo);
 
       expect(result.segmentUrl).toBe(segmentUrl);
       expect(result.codecInfo).toBe(codecInfo);
@@ -185,7 +191,8 @@ describe('BjsnCodecDetector', () => {
     const videoTrak = createTrakBox(videoFormat, 'vide');
     const audioTrak = createTrakBox(audioFormat, 'soun');
 
-    const result = new Uint8Array(moovHeader.length + videoTrak.length + audioTrak.length);
+    const result = new Uint8Array(moovHeader.length + videoTrak.length +
+        audioTrak.length);
     result.set(moovHeader, 0);
     result.set(videoTrak, moovHeader.length);
     result.set(audioTrak, moovHeader.length + videoTrak.length);
@@ -218,7 +225,8 @@ describe('BjsnCodecDetector', () => {
     const hdlr = createHdlrBox(handlerType);
     const minf = createMinfBox(format);
 
-    const result = new Uint8Array(mdiaHeader.length + hdlr.length + minf.length);
+    const result = new Uint8Array(mdiaHeader.length + hdlr.length +
+        minf.length);
     result.set(mdiaHeader, 0);
     result.set(hdlr, mdiaHeader.length);
     result.set(minf, mdiaHeader.length + hdlr.length);
