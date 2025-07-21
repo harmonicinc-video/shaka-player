@@ -2,63 +2,365 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>BJSN Player</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BJSN Player - Harmonic Inc</title>
   <style>
-    body { font-family: sans-serif; }
-    #mainContainer {
-        display: flex;
-        gap: 10px;
-        align-items: flex-start;
+    :root {
+      /* Harmonic Inc Brand Colors */
+      --color-scooter: #25B0D9;
+      --color-alice-blue: #F4FAFF;
+      --color-white: #FFFFFF;
+      --color-tangaroa: #03243D;
+      
+      /* Derived colors */
+      --color-scooter-light: rgba(37, 176, 217, 0.1);
+      --color-scooter-hover: #1e8db3;
+      --color-tangaroa-light: rgba(3, 36, 61, 0.05);
+      --color-border: rgba(3, 36, 61, 0.1);
+      
+      /* Shadows */
+      --shadow-sm: 0 1px 3px rgba(3, 36, 61, 0.06);
+      --shadow-md: 0 4px 12px rgba(3, 36, 61, 0.1);
+      --shadow-lg: 0 10px 25px rgba(3, 36, 61, 0.1);
     }
-    #videoContainer {
-        flex: 3;
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
     }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background-color: var(--color-alice-blue);
+      color: var(--color-tangaroa);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* Header */
+    .header {
+      background: linear-gradient(135deg, var(--color-tangaroa) 0%, #04344f 100%);
+      color: var(--color-white);
+      padding: 2rem 0;
+      box-shadow: var(--shadow-md);
+    }
+
+    .header-content {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 2rem;
+    }
+
+    .header h1 {
+      font-size: 2.5rem;
+      font-weight: 300;
+      letter-spacing: -0.5px;
+      margin-bottom: 0.5rem;
+    }
+
+    .header h1 strong {
+      font-weight: 600;
+      color: var(--color-scooter);
+    }
+
+    .subtitle {
+      font-size: 1rem;
+      opacity: 0.8;
+      font-weight: 300;
+    }
+
+    /* Main Container */
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+
+    /* Input Section */
+    .input-section {
+      background: var(--color-white);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--color-border);
+    }
+
+    .input-wrapper {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+    }
+
+    .input-field {
+      flex: 1;
+      padding: 0.75rem 1rem;
+      font-size: 1rem;
+      border: 2px solid var(--color-border);
+      border-radius: 8px;
+      background: var(--color-white);
+      color: var(--color-tangaroa);
+      transition: all 0.3s ease;
+    }
+
+    .input-field:focus {
+      outline: none;
+      border-color: var(--color-scooter);
+      box-shadow: 0 0 0 3px var(--color-scooter-light);
+    }
+
+    .load-button {
+      padding: 0.75rem 2rem;
+      background: var(--color-scooter);
+      color: var(--color-white);
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .load-button:hover {
+      background: var(--color-scooter-hover);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
+
+    .load-button:active {
+      transform: translateY(0);
+    }
+
+    /* Main Content Grid */
+    .main-content {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 2rem;
+      align-items: start;
+    }
+
+    /* Video Section */
+    .video-section {
+      background: var(--color-tangaroa);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-lg);
+    }
+
     video {
-      height: 80vh;
-      width: auto;
-      max-width: 100%;
-      background-color: black;
+      width: 100%;
+      height: auto;
+      max-height: 70vh;
+      display: block;
+      background-color: #000;
     }
-    #infoContainer {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        height: 80vh; /* Match video viewport height */
+
+    /* Info Panel */
+    .info-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      height: 70vh;
     }
-    #mediaInfo, #log {
-        border: 1px solid #ccc;
-        padding: 5px;
-        background-color: #f5f5f5;
-        white-space: pre-wrap;
-        word-break: break-all;
-        margin-bottom: 10px;
+
+    .info-box {
+      background: var(--color-white);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--color-border);
+      display: flex;
+      flex-direction: column;
     }
+
+    .info-box-header {
+      background: linear-gradient(135deg, var(--color-scooter) 0%, #1e8db3 100%);
+      color: var(--color-white);
+      padding: 1rem 1.5rem;
+      font-weight: 500;
+      font-size: 1.1rem;
+      letter-spacing: 0.5px;
+    }
+
+    .info-box-content {
+      padding: 1rem;
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+      font-size: 0.875rem;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-all;
+      overflow-y: auto;
+      background: #fafbfc;
+      color: var(--color-tangaroa);
+    }
+
     #mediaInfo {
-        flex-shrink: 0; /* Prevent the media info box from shrinking */
-        max-height: 15em; /* Approx 10 lines */
-        overflow-y: auto;
+      flex: 0 0 auto;
+      max-height: 250px;
     }
+
+    .log-box {
+      flex: 1;
+      min-height: 0;
+    }
+
     #log {
-        flex-grow: 1;
-        overflow-y: scroll;
+      height: 100%;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--color-scooter-light) transparent;
+    }
+
+    #log::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    #log::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    #log::-webkit-scrollbar-thumb {
+      background: var(--color-scooter-light);
+      border-radius: 4px;
+    }
+
+    #log::-webkit-scrollbar-thumb:hover {
+      background: var(--color-scooter);
+    }
+
+    /* Loading Animation */
+    @keyframes pulse {
+      0% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.6;
+      }
+      100% {
+        opacity: 1;
+      }
+    }
+
+    .loading {
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    /* Responsive Design */
+    @media (max-width: 1024px) {
+      .main-content {
+        grid-template-columns: 1fr;
+      }
+      
+      .info-panel {
+        height: auto;
+        grid-template-columns: 1fr 1fr;
+      }
+      
+      .log-box {
+        grid-column: span 2;
+        height: 300px;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .header h1 {
+        font-size: 2rem;
+      }
+      
+      .container {
+        padding: 1rem;
+      }
+      
+      .input-wrapper {
+        flex-direction: column;
+      }
+      
+      .load-button {
+        width: 100%;
+      }
+      
+      .info-panel {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Status Indicator */
+    .status-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0.75rem;
+      background: var(--color-tangaroa-light);
+      border-radius: 20px;
+      font-size: 0.875rem;
+      margin-left: 1rem;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--color-scooter);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .status-dot.inactive {
+      background: #999;
+      animation: none;
     }
   </style>
 </head>
 <body>
-  <h1>BJSN Player</h1>
-  <div>
-    <input type="text" id="urlInput" value="media_first.mp4" style="width: 50%;" />
-    <button id="loadButton">Load</button>
-  </div>
-  <div id="mainContainer">
-    <div id="videoContainer">
-      <video controls autoplay></video>
+  <header class="header">
+    <div class="header-content">
+      <h1><strong>BJSN</strong> Player</h1>
+      <p class="subtitle">Advanced Media Streaming Test Interface by Harmonic Inc</p>
     </div>
-    <div id="infoContainer">
-      <h2>Media Info</h2>
-      <pre id="mediaInfo"></pre>
-      <h2>Log</h2>
-      <pre id="log"></pre>
+  </header>
+
+  <div class="container">
+    <div class="input-section">
+      <div class="input-wrapper">
+        <input 
+          type="text" 
+          id="urlInput" 
+          class="input-field" 
+          value="media_first.mp4" 
+          placeholder="Enter media URL..."
+        />
+        <button id="loadButton" class="load-button">
+          Load Stream
+        </button>
+      </div>
+    </div>
+
+    <div class="main-content">
+      <div class="video-section">
+        <video controls autoplay></video>
+      </div>
+
+      <div class="info-panel">
+        <div class="info-box">
+          <div class="info-box-header">
+            Media Information
+            <span class="status-indicator" id="statusIndicator" style="display: none;">
+              <span class="status-dot"></span>
+              <span id="statusText">Active</span>
+            </span>
+          </div>
+          <pre id="mediaInfo" class="info-box-content"></pre>
+        </div>
+
+        <div class="info-box log-box">
+          <div class="info-box-header">
+            Activity Log
+          </div>
+          <pre id="log" class="info-box-content"></pre>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -78,14 +380,34 @@
       const mediaInfoElement = document.getElementById('mediaInfo');
       const urlInput = document.getElementById('urlInput');
       const loadButton = document.getElementById('loadButton');
+      const statusIndicator = document.getElementById('statusIndicator');
+      const statusText = document.getElementById('statusText');
+      const statusDot = document.querySelector('.status-dot');
       let activeSession = null;
       const MAX_LOG_LINES = 200; // Cap the log to prevent performance issues
 
+      function updateStatus(active, text = null) {
+        if (active) {
+          statusIndicator.style.display = 'inline-flex';
+          statusDot.classList.remove('inactive');
+          statusText.textContent = text || 'Active';
+        } else {
+          if (statusIndicator.style.display !== 'none') {
+            statusDot.classList.add('inactive');
+            statusText.textContent = 'Inactive';
+            setTimeout(() => {
+              statusIndicator.style.display = 'none';
+            }, 1000);
+          }
+        }
+      }
+
       function log(message, ...args) {
         console.log(message, ...args);
-        const text = [message, ...args.map(arg => JSON.stringify(arg, null, 2))].join(' ');
+        const timestamp = new Date().toLocaleTimeString();
+        const text = `[${timestamp}] ${message} ${args.map(arg => JSON.stringify(arg, null, 2)).join(' ')}`;
         
-        let lines = logElement.textContent.split('\n');
+        let lines = logElement.textContent.split('\n').filter(line => line.trim());
         lines.push(text);
         if (lines.length > MAX_LOG_LINES) {
           lines = lines.slice(lines.length - MAX_LOG_LINES);
@@ -387,10 +709,12 @@
         async start() {
           this.video.src = window.URL.createObjectURL(this.ms);
           this.ms.addEventListener('sourceopen', () => this.onSourceOpen());
+          updateStatus(true, 'Initializing');
         }
 
         stop() {
           this.isActive = false;
+          updateStatus(false);
           if (this.fetchInterval) {
             clearTimeout(this.fetchInterval);
             this.fetchInterval = null;
@@ -418,6 +742,7 @@
 
           try {
             log('MediaSource opened');
+            updateStatus(true, 'Loading');
             log('Fetching initial segment:', this.initialUrl);
             const initialData = await GET(this.initialUrl);
             if (!this.isActive) return;
@@ -462,7 +787,7 @@
 
             mediaInfoElement.textContent =
               `BJSN Info:\n${JSON.stringify(bjsnData, null, 2)}\n\n` +
-              `Codec fix:\n` +
+              `Codec Information:\n` +
               `  Video: ${videoCodec}\n` +
               `  Audio: ${audioCodec}`;
 
@@ -503,6 +828,7 @@
                     try {
                       log('Setting currentTime to start of buffered range:', this.video.buffered.start(0));
                       this.video.currentTime = this.video.buffered.start(0);
+                      updateStatus(true, 'Playing');
                     } catch (e) {
                       log('Error setting currentTime:', e.message);
                     }
@@ -590,6 +916,7 @@
           } catch (error) {
             if (this.isActive) {
               log('Error in playback session:', error);
+              updateStatus(false);
             }
           }
         }
@@ -637,6 +964,13 @@
         log('Starting new session for URL:', url);
         activeSession = new PlaybackSession(video, url);
         activeSession.start();
+      });
+
+      // Add keyboard shortcut for Enter key
+      urlInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          loadButton.click();
+        }
       });
     })();
   </script>
