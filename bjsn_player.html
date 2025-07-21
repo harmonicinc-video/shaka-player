@@ -696,6 +696,89 @@
         }
       }
 
+      class SegmentDownloadManager {
+        constructor(normalInterval) {
+          this.state = 'NORMAL';  // NORMAL, RETRY, RECOVERING
+          this.normalInterval = normalInterval; // Passed from segmentDurationMs
+          this.retryInterval = 100;   // 100ms for failed downloads
+          this.maxRetryAttempts = 10; // Maximum consecutive retries before backing off
+          this.consecutiveFailures = 0;
+          this.lastSuccessTime = Date.now();
+        }
+
+        // Calculate next download delay based on current state and fetch result
+        calculateNextDelay(fetchSuccess, fetchStartTime, fetchEndTime) {
+          const fetchDuration = fetchEndTime - fetchStartTime;
+          
+          if (fetchSuccess) {
+            return this.handleSuccessfulFetch(fetchDuration);
+          } else {
+            return this.handleFailedFetch();
+          }
+        }
+
+        handleSuccessfulFetch(fetchDuration) {
+          if (this.state === 'RETRY') {
+            // Transitioning from retry to normal - start recovery
+            this.state = 'RECOVERING';
+            this.consecutiveFailures = 0;
+            this.lastSuccessTime = Date.now();
+            
+            // Start with normal interval minus fetch time
+            const delay = Math.max(0, this.normalInterval - fetchDuration);
+            log(`Download successful after retries. Entering RECOVERING state. Next fetch in ${delay}ms`);
+            return delay;
+            
+          } else if (this.state === 'RECOVERING') {
+            // Already in recovery, continue with normal timing
+            this.state = 'NORMAL';
+            this.lastSuccessTime = Date.now();
+            
+            const delay = Math.max(0, this.normalInterval - fetchDuration);
+            log(`Recovery complete. Returning to NORMAL state. Next fetch in ${delay}ms`);
+            return delay;
+            
+          } else {
+            // Normal successful fetch
+            this.consecutiveFailures = 0;
+            this.lastSuccessTime = Date.now();
+            
+            const delay = Math.max(0, this.normalInterval - fetchDuration);
+            log(`Normal successful fetch. Next fetch in ${delay}ms`);
+            return delay;
+          }
+        }
+
+        handleFailedFetch() {
+          this.consecutiveFailures++;
+          
+          if (this.state === 'NORMAL' || this.state === 'RECOVERING') {
+            // Enter retry state
+            this.state = 'RETRY';
+            log(`Download failed. Entering RETRY state. Consecutive failures: ${this.consecutiveFailures}`);
+          }
+          
+          // Progressive backoff for excessive failures
+          let delay = this.retryInterval;
+          if (this.consecutiveFailures > this.maxRetryAttempts) {
+            delay = Math.min(this.retryInterval * Math.pow(2, this.consecutiveFailures - this.maxRetryAttempts), 5000);
+            log(`Excessive failures (${this.consecutiveFailures}). Using progressive backoff: ${delay}ms`);
+          } else {
+            log(`Retry attempt ${this.consecutiveFailures}. Next retry in ${delay}ms`);
+          }
+          
+          return delay;
+        }
+
+        getState() {
+          return {
+            state: this.state,
+            consecutiveFailures: this.consecutiveFailures,
+            timeSinceLastSuccess: Date.now() - this.lastSuccessTime
+          };
+        }
+      }
+
       class PlaybackSession {
         constructor(videoElement, initialUrl) {
           this.video = videoElement;
@@ -862,7 +945,10 @@
             let currentSeqNum = bjsnData.seq_num;
             const templateUrl = bjsnData.template_path;
             const baseUrl = new URL(this.initialUrl, window.location.href);
-            const segmentDurationMs = 1000; // Assume 1-second segments for refresh rate
+            const segmentDurationMs = 2000; // Assume 2-second segments for refresh rate
+
+            // Initialize the download manager with the segment duration as normal interval
+            const downloadManager = new SegmentDownloadManager(segmentDurationMs);
 
             const scheduleNextFetch = (delay) => {
               if (!this.isActive) return;
@@ -877,6 +963,7 @@
               currentSeqNum++;
               const nextSegmentFile = templateUrl.replace('${num}', currentSeqNum);
               const nextUrl = new URL(nextSegmentFile, baseUrl).href;
+              
               try {
                 log('Fetching next segment:', nextUrl);
                 const nextData = await GET(nextUrl);
@@ -896,16 +983,8 @@
                 currentSeqNum--;
               } finally {
                 if (this.isActive) {
-                  let delay;
-                  if (fetchSuccess) {
-                    const endTime = Date.now();
-                    const duration = endTime - startTime;
-                    delay = Math.max(0, segmentDurationMs - duration);
-                    log(`Fetch/process took ${duration}ms, next fetch in ${delay}ms`);
-                  } else {
-                    delay = 100; // Retry after 100ms on failure
-                    log(`Fetch failed, retrying in ${delay}ms`);
-                  }
+                  const endTime = Date.now();
+                  const delay = downloadManager.calculateNextDelay(fetchSuccess, startTime, endTime);
                   scheduleNextFetch(delay);
                 }
               }
