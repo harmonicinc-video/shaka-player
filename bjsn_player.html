@@ -364,15 +364,7 @@
     </div>
   </div>
 
-  <script src="node_modules/google-closure-library/closure/goog/base.js"></script>
-  <script src="dist/deps.js"></script>
-  <script src="shaka-player.uncompiled.js"></script>
-  <script>
-    goog.require('shaka.util.BjsnParser');
-    goog.require('shaka.util.BjsnBoxStripper');
-    goog.require('shaka.util.BjsnCodecDetector');
-  </script>
-
+  <script src="bjsn_utils.js"></script>
   <script type="text/javascript">
     (async function() {
       const video = document.querySelector('video');
@@ -833,7 +825,7 @@
             log('Initial segment fetched, size:', initialData.length);
 
             log('Parsing BJSN box...');
-            const bjsnData = shaka.util.BjsnParser.parseFromSegment(initialData);
+            const bjsnData = BjsnUtils.BjsnParser.parseFromSegment(initialData);
             if (!bjsnData) {
               throw new Error('BJSN box not found or failed to parse.');
             }
@@ -858,8 +850,8 @@
             const audioInit = processed.initSegments[audioTrack.id];
 
             log('Detecting codecs...');
-            const videoCodecInfo = await shaka.util.BjsnCodecDetector.detectCodecsFromSegment(videoInit);
-            const audioCodecInfo = await shaka.util.BjsnCodecDetector.detectCodecsFromSegment(audioInit);
+            const videoCodecInfo = await BjsnUtils.BjsnCodecDetector.detectCodecsFromSegment(videoInit);
+            const audioCodecInfo = await BjsnUtils.BjsnCodecDetector.detectCodecsFromSegment(audioInit);
             const videoCodec = videoCodecInfo.video;
             const audioCodec = audioCodecInfo.audio;
 
