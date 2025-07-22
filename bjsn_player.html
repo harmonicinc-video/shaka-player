@@ -287,6 +287,19 @@
       }
     }
 
+    /* Performance metrics styling */
+    .perf-metrics {
+      background: var(--color-scooter-light);
+      padding: 0.75rem;
+      margin-top: 0.5rem;
+      border-radius: 6px;
+      border: 1px solid var(--color-scooter);
+    }
+
+    .perf-metrics strong {
+      color: var(--color-scooter);
+    }
+
     /* Status Indicator */
     .status-indicator {
       display: inline-flex;
@@ -773,13 +786,16 @@
 
       // Progressive MP4 parser for early extraction of BJSN and init segments
       class ProgressiveMp4Parser {
-        constructor() {
+        constructor(onMediaSegmentCallback) {
           this.buffer = new Uint8Array(0);
           this.parsedBoxes = [];
           this.bjsnData = null;
           this.ftypBox = null;
           this.moovBox = null;
           this.foundAllInit = false;
+          this.onMediaSegmentCallback = onMediaSegmentCallback;
+          this.pendingMoof = null;
+          this.tracks = null;
         }
 
         appendData(newData) {
@@ -827,6 +843,17 @@
               this.moovBox = box;
               log('moov box found, size:', size);
               this.foundAllInit = true;
+              // Extract tracks info for media segment processing
+              this.tracks = BjsnMp4Processor.parseTracksFromMoov(this.moovBox.data);
+            } else if (type === 'moof') {
+              // Store moof and wait for matching mdat
+              this.pendingMoof = box;
+              log('moof box found, size:', size);
+            } else if (type === 'mdat' && this.pendingMoof) {
+              // We have a complete moof/mdat pair - process it immediately
+              log('mdat box found, size:', size, ' - processing media segment');
+              this.processMediaSegment(this.pendingMoof, box);
+              this.pendingMoof = null;
             }
             
             offset += size;
@@ -836,6 +863,22 @@
           if (offset > 0) {
             this.buffer = this.buffer.slice(offset);
           }
+        }
+
+        processMediaSegment(moofBox, mdatBox) {
+          if (!this.tracks || !this.onMediaSegmentCallback) return;
+          
+          // Get track ID from moof
+          const trackId = BjsnMp4Processor.getTrackIdFromMoof(moofBox.data);
+          if (!trackId) return;
+          
+          // Combine moof and mdat into a single segment
+          const segmentData = new Uint8Array(moofBox.size + mdatBox.size);
+          segmentData.set(moofBox.data, 0);
+          segmentData.set(mdatBox.data, moofBox.size);
+          
+          // Emit the segment immediately
+          this.onMediaSegmentCallback(trackId, segmentData);
         }
 
         parseBjsnBox(boxData) {
@@ -860,7 +903,7 @@
           }
           
           // Process and return init segments
-          const tracks = BjsnMp4Processor.parseTracksFromMoov(this.moovBox.data);
+          const tracks = this.tracks || BjsnMp4Processor.parseTracksFromMoov(this.moovBox.data);
           const initSegments = {};
           
           tracks.forEach(track => {
@@ -876,9 +919,13 @@
         }
 
         getRemainingBoxes() {
-          // Return all parsed boxes except bjsn, ftyp, and moov
+          // Return all parsed boxes except bjsn, ftyp, moov, and already processed moof/mdat
           return this.parsedBoxes.filter(box => 
-            box.type !== 'bjsn' && box.type !== 'ftyp' && box.type !== 'moov'
+            box.type !== 'bjsn' && 
+            box.type !== 'ftyp' && 
+            box.type !== 'moov' &&
+            box.type !== 'moof' &&
+            box.type !== 'mdat'
           );
         }
       }
@@ -959,7 +1006,10 @@
           this.fetchInterval = null;
           this.logInterval = null;
           this.isActive = true;
-          this.progressiveParser = new ProgressiveMp4Parser();
+          // Pass callback to handle media segments as they arrive
+          this.progressiveParser = new ProgressiveMp4Parser((trackId, segmentData) => {
+            this.onMediaSegmentAvailable(trackId, segmentData);
+          });
           this.stateMachine = null;
           this.videoTrack = null;
           this.audioTrack = null;
@@ -968,12 +1018,46 @@
           this.baseUrl = null;
           this.downloadManager = null;
           this.initialDataProcessed = false;
+          this.startTime = null;
+          this.playingTime = null;
+          this.timingMetrics = {
+            sourceOpenTime: null,
+            firstByteTime: null,
+            bjsnParseTime: null,
+            initSegmentTime: null,
+            firstAppendTime: null,
+            firstMediaSegmentTime: null
+          };
+          this.firstMediaSegmentAppended = false;
+          this.mediaSegmentCount = { video: 0, audio: 0 };
         }
 
         async start() {
+          this.startTime = Date.now();
+          log('Session start time recorded');
+          
+          // Start elapsed time display update
+          this.updateElapsedTime();
+          
           this.video.src = window.URL.createObjectURL(this.ms);
           this.ms.addEventListener('sourceopen', () => this.onSourceOpen());
           updateStatus(true, 'Initializing');
+        }
+
+        updateElapsedTime() {
+          if (!this.isActive || this.playingTime) return;
+          
+          const elapsed = Date.now() - this.startTime;
+          const currentContent = mediaInfoElement.textContent;
+          const perfIndex = currentContent.indexOf('\n\nLoading Performance:');
+          
+          if (perfIndex > -1) {
+            const beforePerf = currentContent.substring(0, perfIndex);
+            mediaInfoElement.textContent = beforePerf + `\n\nLoading Performance:\n  Elapsed Time: ${elapsed}ms\n  Status: Loading...`;
+          }
+          
+          // Update every 100ms
+          setTimeout(() => this.updateElapsedTime(), 100);
         }
 
         stop() {
@@ -1006,6 +1090,7 @@
 
           try {
             log('MediaSource opened');
+            this.timingMetrics.sourceOpenTime = Date.now() - this.startTime;
             updateStatus(true, 'Loading');
             
             // Start progressive download with fetch API
@@ -1018,6 +1103,7 @@
             
             const reader = response.body.getReader();
             let receivedLength = 0;
+            let firstByte = true;
             
             while (true) {
               const { done, value } = await reader.read();
@@ -1026,6 +1112,11 @@
               if (!this.isActive) {
                 reader.cancel();
                 return;
+              }
+              
+              if (firstByte) {
+                this.timingMetrics.firstByteTime = Date.now() - this.startTime;
+                firstByte = false;
               }
               
               receivedLength += value.length;
@@ -1054,23 +1145,65 @@
           }
         }
 
+        onMediaSegmentAvailable(trackId, segmentData) {
+          if (!this.stateMachine || !this.isActive) return;
+          
+          // Get the appropriate source buffer
+          let sourceBuffer;
+          let trackType;
+          if (this.videoTrack && trackId === this.videoTrack.id) {
+            sourceBuffer = this.stateMachine.sourceBuffers.video;
+            trackType = 'video';
+          } else if (this.audioTrack && trackId === this.audioTrack.id) {
+            sourceBuffer = this.stateMachine.sourceBuffers.audio;
+            trackType = 'audio';
+          } else {
+            return; // Unknown track
+          }
+          
+          // Record first media segment time
+          if (!this.firstMediaSegmentAppended && !this.timingMetrics.firstMediaSegmentTime) {
+            this.timingMetrics.firstMediaSegmentTime = Date.now() - this.startTime;
+            log(`First media segment (${trackType}) available at ${this.timingMetrics.firstMediaSegmentTime}ms`);
+          }
+          
+          // Enqueue the segment for appending
+          this.mediaSegmentCount[trackType]++;
+          const segmentIndex = this.mediaSegmentCount[trackType] - 1;
+          
+          this.stateMachine.enqueue({
+            type: 'append',
+            sourceBuffer: sourceBuffer,
+            data: segmentData,
+            callback: () => {
+              log(`${trackType} segment ${segmentIndex} appended (progressive)`);
+              if (!this.firstMediaSegmentAppended) {
+                this.firstMediaSegmentAppended = true;
+                this.onFirstSegmentAppended();
+              }
+            }
+          });
+        }
+
         async processAvailableData() {
           // Check if we have BJSN data
           if (this.progressiveParser.bjsnData && !this.currentSeqNum) {
             const bjsnData = this.progressiveParser.bjsnData;
             log('Processing BJSN data early');
+            this.timingMetrics.bjsnParseTime = Date.now() - this.startTime;
             
             this.currentSeqNum = bjsnData.seq_num;
             this.templateUrl = bjsnData.template_path;
             this.baseUrl = new URL(this.initialUrl, window.location.href);
             
             // Update media info display
-            mediaInfoElement.textContent = `BJSN Info:\n${JSON.stringify(bjsnData, null, 2)}`;
+            mediaInfoElement.textContent = `BJSN Info:\n${JSON.stringify(bjsnData, null, 2)}\n\nLoading Performance:\n  Status: Loading...`;
           }
           
           // Check if we have init segments
           if (this.progressiveParser.hasInitSegments() && !this.stateMachine) {
             log('Processing init segments early');
+            this.timingMetrics.initSegmentTime = Date.now() - this.startTime;
             
             const initData = this.progressiveParser.getInitSegments();
             const { tracks, initSegments } = initData;
@@ -1098,7 +1231,10 @@
             log('Codecs detected:', { video: videoCodec, audio: audioCodec });
             
             // Update media info
-            mediaInfoElement.textContent += `\n\nCodec Information:\n  Video: ${videoCodec}\n  Audio: ${audioCodec}`;
+            const currentContent = mediaInfoElement.textContent;
+            const bjsnEndIndex = currentContent.indexOf('\n\nLoading Performance:');
+            const bjsnContent = bjsnEndIndex > -1 ? currentContent.substring(0, bjsnEndIndex) : currentContent;
+            mediaInfoElement.textContent = bjsnContent + `\n\nCodec Information:\n  Video: ${videoCodec}\n  Audio: ${audioCodec}\n\nLoading Performance:\n  Status: Loading...`;
             
             // Create source buffers
             if (!this.isActive || this.ms.readyState !== 'open') return;
@@ -1127,11 +1263,18 @@
             
             // Append init segments immediately
             log('Appending init segments immediately');
+            let firstAppend = true;
             this.stateMachine.enqueue({
               type: 'append',
               sourceBuffer: videoSourceBuffer,
               data: videoInit,
-              callback: () => log('Video init segment appended')
+              callback: () => {
+                log('Video init segment appended');
+                if (firstAppend) {
+                  this.timingMetrics.firstAppendTime = Date.now() - this.startTime;
+                  firstAppend = false;
+                }
+              }
             });
             
             this.stateMachine.enqueue({
@@ -1144,55 +1287,14 @@
         }
 
         async processFinalData() {
-          if (!this.stateMachine || this.initialDataProcessed) return;
+          // Check if there are any remaining unpaired moof boxes
+          if (this.progressiveParser.pendingMoof) {
+            log('Warning: Unpaired moof box at end of stream');
+          }
           
+          // Mark initial data as processed
           this.initialDataProcessed = true;
-          log('Processing remaining media segments from initial file');
-          
-          // Get remaining boxes (moof/mdat pairs)
-          const remainingBoxes = this.progressiveParser.getRemainingBoxes();
-          const moofBoxes = remainingBoxes.filter(b => b.type === 'moof');
-          const mdatBoxes = remainingBoxes.filter(b => b.type === 'mdat');
-          
-          // Group by track
-          const tracks = [this.videoTrack, this.audioTrack];
-          const mediaSegments = BjsnMp4Processor.groupMediaSegmentsByTrack(moofBoxes, mdatBoxes, tracks);
-          
-          // Append media segments
-          const videoSB = this.stateMachine.sourceBuffers.video;
-          const audioSB = this.stateMachine.sourceBuffers.audio;
-          
-          let firstSegmentAppended = false;
-          
-          // Append video segments
-          if (mediaSegments[this.videoTrack.id]) {
-            mediaSegments[this.videoTrack.id].forEach((seg, index) => {
-              this.stateMachine.enqueue({
-                type: 'append',
-                sourceBuffer: videoSB,
-                data: seg,
-                callback: () => {
-                  log(`Video segment ${index} appended`);
-                  if (!firstSegmentAppended) {
-                    firstSegmentAppended = true;
-                    this.onFirstSegmentAppended();
-                  }
-                }
-              });
-            });
-          }
-          
-          // Append audio segments
-          if (mediaSegments[this.audioTrack.id]) {
-            mediaSegments[this.audioTrack.id].forEach((seg, index) => {
-              this.stateMachine.enqueue({
-                type: 'append',
-                sourceBuffer: audioSB,
-                data: seg,
-                callback: () => log(`Audio segment ${index} appended`)
-              });
-            });
-          }
+          log('Initial media file fully processed');
         }
 
         onFirstSegmentAppended() {
@@ -1201,7 +1303,46 @@
             try {
               log('Setting currentTime to start of buffered range:', this.video.buffered.start(0));
               this.video.currentTime = this.video.buffered.start(0);
-              updateStatus(true, 'Playing');
+              
+              // Set up playing event listener to track when playback actually starts
+              const onPlaying = () => {
+                this.playingTime = Date.now();
+                const loadTime = this.playingTime - this.startTime;
+                log(`Video reached playing state. Total load time: ${loadTime}ms`);
+                
+                // Update media info with detailed timing
+                const currentContent = mediaInfoElement.textContent;
+                const perfIndex = currentContent.indexOf('\n\nLoading Performance:');
+                if (perfIndex > -1) {
+                  const beforePerf = currentContent.substring(0, perfIndex);
+                  const perfDetails = `\n\nLoading Performance:
+  Time to Playing: ${loadTime}ms
+  Status: Playing
+  
+Detailed Timing Breakdown:
+  Source Open: ${this.timingMetrics.sourceOpenTime}ms
+  First Byte: ${this.timingMetrics.firstByteTime}ms
+  BJSN Parse: ${this.timingMetrics.bjsnParseTime}ms
+  Init Segment: ${this.timingMetrics.initSegmentTime}ms
+  First Append: ${this.timingMetrics.firstAppendTime}ms
+  First Media Segment: ${this.timingMetrics.firstMediaSegmentTime || 'N/A'}ms
+  Playing State: ${loadTime}ms`;
+                  mediaInfoElement.textContent = beforePerf + perfDetails;
+                }
+                
+                updateStatus(true, 'Playing');
+                this.video.removeEventListener('playing', onPlaying);
+              };
+              
+              this.video.addEventListener('playing', onPlaying);
+              
+              // Also listen for play event in case playing doesn't fire
+              const onPlay = () => {
+                updateStatus(true, 'Playing');
+                this.video.removeEventListener('play', onPlay);
+              };
+              this.video.addEventListener('play', onPlay);
+              
             } catch (e) {
               log('Error setting currentTime:', e.message);
             }
@@ -1212,12 +1353,8 @@
           const segmentDurationMs = 2000; // Assume 2-second segments
           this.downloadManager = new SegmentDownloadManager(segmentDurationMs);
           
-          const scheduleNextFetch = (delay) => {
-            if (!this.isActive) return;
-            this.fetchInterval = setTimeout(() => this.fetchNextSegment(), delay);
-          };
-          
-          scheduleNextFetch(segmentDurationMs);
+          // The first fetch should be immediate after processing the init segment.
+          this.fetchNextSegment();
         }
 
         async fetchNextSegment() {
