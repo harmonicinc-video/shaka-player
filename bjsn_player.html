@@ -367,6 +367,13 @@
           <pre id="mediaInfo" class="info-box-content"></pre>
         </div>
 
+        <div class="info-box">
+          <div class="info-box-header">
+            Performance Metrics
+          </div>
+          <pre id="perfMetrics" class="info-box-content"></pre>
+        </div>
+
         <div class="info-box log-box">
           <div class="info-box-header">
             Activity Log
@@ -383,6 +390,7 @@
       const video = document.querySelector('video');
       const logElement = document.getElementById('log');
       const mediaInfoElement = document.getElementById('mediaInfo');
+      const perfMetricsElement = document.getElementById('perfMetrics');
       const urlInput = document.getElementById('urlInput');
       const loadButton = document.getElementById('loadButton');
       const statusIndicator = document.getElementById('statusIndicator');
@@ -1036,6 +1044,10 @@
           this.startTime = Date.now();
           log('Session start time recorded');
           
+          // Register event listeners early to catch autoplay events.
+          this.video.addEventListener('playing', () => this.onPlaying());
+          this.video.addEventListener('play', () => this.onPlay());
+
           // Start elapsed time display update
           this.updateElapsedTime();
           
@@ -1044,17 +1056,45 @@
           updateStatus(true, 'Initializing');
         }
 
+        onPlaying() {
+          if (this.playingTime) return; // Already handled
+          this.playingTime = Date.now();
+          const loadTime = this.playingTime - this.startTime;
+          log(`Video reached playing state. Total load time: ${loadTime}ms`);
+          
+          // Update media info with detailed timing
+          const perfDetails = `Time to Playing: ${loadTime}ms
+Status: Playing
+
+Detailed Timing Breakdown:
+  Source Open: ${this.timingMetrics.sourceOpenTime}ms
+  First Byte: ${this.timingMetrics.firstByteTime}ms
+  BJSN Parse: ${this.timingMetrics.bjsnParseTime}ms
+  Init Segment: ${this.timingMetrics.initSegmentTime}ms
+  First Append: ${this.timingMetrics.firstAppendTime}ms
+  First Media Segment: ${this.timingMetrics.firstMediaSegmentTime || 'N/A'}ms
+  Playing State: ${loadTime}ms`;
+          perfMetricsElement.textContent = perfDetails;
+          
+          updateStatus(true, 'Playing');
+        }
+
+        onPlay() {
+          if (this.playingTime) return; // Already handled
+          // This might fire before 'playing', so we handle it similarly
+          // but without the detailed perf breakdown which depends on 'playing'.
+          this.playingTime = Date.now();
+          updateStatus(true, 'Playing');
+          if (perfMetricsElement.textContent.includes('Status: Loading...')) {
+            perfMetricsElement.textContent = perfMetricsElement.textContent.replace('Status: Loading...', 'Status: Playing');
+          }
+        }
+
         updateElapsedTime() {
           if (!this.isActive || this.playingTime) return;
           
           const elapsed = Date.now() - this.startTime;
-          const currentContent = mediaInfoElement.textContent;
-          const perfIndex = currentContent.indexOf('\n\nLoading Performance:');
-          
-          if (perfIndex > -1) {
-            const beforePerf = currentContent.substring(0, perfIndex);
-            mediaInfoElement.textContent = beforePerf + `\n\nLoading Performance:\n  Elapsed Time: ${elapsed}ms\n  Status: Loading...`;
-          }
+          perfMetricsElement.textContent = `Elapsed Time: ${elapsed}ms\nStatus: Loading...`;
           
           // Update every 100ms
           setTimeout(() => this.updateElapsedTime(), 100);
@@ -1197,7 +1237,8 @@
             this.baseUrl = new URL(this.initialUrl, window.location.href);
             
             // Update media info display
-            mediaInfoElement.textContent = `BJSN Info:\n${JSON.stringify(bjsnData, null, 2)}\n\nLoading Performance:\n  Status: Loading...`;
+            mediaInfoElement.textContent = `BJSN Info:\n${JSON.stringify(bjsnData, null, 2)}`;
+            perfMetricsElement.textContent = `Status: Loading...`;
           }
           
           // Check if we have init segments
@@ -1232,9 +1273,7 @@
             
             // Update media info
             const currentContent = mediaInfoElement.textContent;
-            const bjsnEndIndex = currentContent.indexOf('\n\nLoading Performance:');
-            const bjsnContent = bjsnEndIndex > -1 ? currentContent.substring(0, bjsnEndIndex) : currentContent;
-            mediaInfoElement.textContent = bjsnContent + `\n\nCodec Information:\n  Video: ${videoCodec}\n  Audio: ${audioCodec}\n\nLoading Performance:\n  Status: Loading...`;
+            mediaInfoElement.textContent = currentContent + `\n\nCodec Information:\n  Video: ${videoCodec}\n  Audio: ${audioCodec}`;
             
             // Create source buffers
             if (!this.isActive || this.ms.readyState !== 'open') return;
@@ -1303,46 +1342,6 @@
             try {
               log('Setting currentTime to start of buffered range:', this.video.buffered.start(0));
               this.video.currentTime = this.video.buffered.start(0);
-              
-              // Set up playing event listener to track when playback actually starts
-              const onPlaying = () => {
-                this.playingTime = Date.now();
-                const loadTime = this.playingTime - this.startTime;
-                log(`Video reached playing state. Total load time: ${loadTime}ms`);
-                
-                // Update media info with detailed timing
-                const currentContent = mediaInfoElement.textContent;
-                const perfIndex = currentContent.indexOf('\n\nLoading Performance:');
-                if (perfIndex > -1) {
-                  const beforePerf = currentContent.substring(0, perfIndex);
-                  const perfDetails = `\n\nLoading Performance:
-  Time to Playing: ${loadTime}ms
-  Status: Playing
-  
-Detailed Timing Breakdown:
-  Source Open: ${this.timingMetrics.sourceOpenTime}ms
-  First Byte: ${this.timingMetrics.firstByteTime}ms
-  BJSN Parse: ${this.timingMetrics.bjsnParseTime}ms
-  Init Segment: ${this.timingMetrics.initSegmentTime}ms
-  First Append: ${this.timingMetrics.firstAppendTime}ms
-  First Media Segment: ${this.timingMetrics.firstMediaSegmentTime || 'N/A'}ms
-  Playing State: ${loadTime}ms`;
-                  mediaInfoElement.textContent = beforePerf + perfDetails;
-                }
-                
-                updateStatus(true, 'Playing');
-                this.video.removeEventListener('playing', onPlaying);
-              };
-              
-              this.video.addEventListener('playing', onPlaying);
-              
-              // Also listen for play event in case playing doesn't fire
-              const onPlay = () => {
-                updateStatus(true, 'Playing');
-                this.video.removeEventListener('play', onPlay);
-              };
-              this.video.addEventListener('play', onPlay);
-              
             } catch (e) {
               log('Error setting currentTime:', e.message);
             }
