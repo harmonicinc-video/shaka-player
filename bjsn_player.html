@@ -1034,10 +1034,17 @@
             bjsnParseTime: null,
             initSegmentTime: null,
             firstAppendTime: null,
-            firstMediaSegmentTime: null
+            firstMediaSegmentTime: null,
+            videoPlayTime: null,
+            videoInitAppendTime: null,
+            audioInitAppendTime: null,
+            allMediaChunksAppendedTime: null
           };
           this.firstMediaSegmentAppended = false;
           this.mediaSegmentCount = { video: 0, audio: 0 };
+          this.initialFileChunksFromParser = 0; // Chunks from initial file progressive parsing
+          this.initialFileChunksAppended = 0; // How many of those have been appended
+          this.initialFileProcessingComplete = false;
         }
 
         async start() {
@@ -1067,13 +1074,19 @@
 Status: Playing
 
 Detailed Timing Breakdown:
+  Load Stream to video.play(): ${this.timingMetrics.videoPlayTime || 'N/A'}ms
   Source Open: ${this.timingMetrics.sourceOpenTime}ms
   First Byte: ${this.timingMetrics.firstByteTime}ms
   BJSN Parse: ${this.timingMetrics.bjsnParseTime}ms
   Init Segment: ${this.timingMetrics.initSegmentTime}ms
+  Video Init Append: ${this.timingMetrics.videoInitAppendTime || 'N/A'}ms
+  Audio Init Append: ${this.timingMetrics.audioInitAppendTime || 'N/A'}ms
   First Append: ${this.timingMetrics.firstAppendTime}ms
   First Media Segment: ${this.timingMetrics.firstMediaSegmentTime || 'N/A'}ms
-  Playing State: ${loadTime}ms`;
+  All Media Chunks: ${this.timingMetrics.allMediaChunksAppendedTime || 'N/A'}ms
+  Playing State: ${loadTime}ms
+
+Note: "All Media Chunks" refers to all chunks from the initial file only (not live segments).`;
           perfMetricsElement.textContent = perfDetails;
           
           updateStatus(true, 'Playing');
@@ -1091,13 +1104,45 @@ Detailed Timing Breakdown:
         }
 
         updateElapsedTime() {
-          if (!this.isActive || this.playingTime) return;
+          if (!this.isActive) return;
           
           const elapsed = Date.now() - this.startTime;
-          perfMetricsElement.textContent = `Elapsed Time: ${elapsed}ms\nStatus: Loading...`;
+          let status = this.playingTime ? 'Playing' : 'Loading...';
+          let details = `Elapsed Time: ${elapsed}ms\nStatus: ${status}`;
           
-          // Update every 100ms
-          setTimeout(() => this.updateElapsedTime(), 100);
+          // Add completed timing details if available
+          if (this.timingMetrics.sourceOpenTime) {
+            details += `\n\nTiming Progress:`;
+            details += `\n  Source Open: ${this.timingMetrics.sourceOpenTime}ms`;
+          }
+          if (this.timingMetrics.firstByteTime) {
+            details += `\n  First Byte: ${this.timingMetrics.firstByteTime}ms`;
+          }
+          if (this.timingMetrics.bjsnParseTime) {
+            details += `\n  BJSN Parse: ${this.timingMetrics.bjsnParseTime}ms`;
+          }
+          if (this.timingMetrics.videoInitAppendTime) {
+            details += `\n  Video Init: ${this.timingMetrics.videoInitAppendTime}ms`;
+          }
+          if (this.timingMetrics.audioInitAppendTime) {
+            details += `\n  Audio Init: ${this.timingMetrics.audioInitAppendTime}ms`;
+          }
+          if (this.timingMetrics.firstMediaSegmentTime) {
+            details += `\n  First Media: ${this.timingMetrics.firstMediaSegmentTime}ms`;
+          }
+          if (this.timingMetrics.videoPlayTime) {
+            details += `\n  video.play(): ${this.timingMetrics.videoPlayTime}ms`;
+          }
+          if (this.timingMetrics.allMediaChunksAppendedTime) {
+            details += `\n  All Initial Chunks: ${this.timingMetrics.allMediaChunksAppendedTime}ms`;
+          }
+          
+          perfMetricsElement.textContent = details;
+          
+          // Continue updating for a bit longer to catch late timing metrics
+          if (!this.playingTime || elapsed < 10000) { // Keep updating for 10 seconds
+            setTimeout(() => this.updateElapsedTime(), 100);
+          }
         }
 
         stop() {
@@ -1209,6 +1254,7 @@ Detailed Timing Breakdown:
           
           // Enqueue the segment for appending
           this.mediaSegmentCount[trackType]++;
+          this.initialFileChunksFromParser++; // Count chunks from initial file parsing
           const segmentIndex = this.mediaSegmentCount[trackType] - 1;
           
           this.stateMachine.enqueue({
@@ -1217,10 +1263,14 @@ Detailed Timing Breakdown:
             data: segmentData,
             callback: () => {
               log(`${trackType} segment ${segmentIndex} appended (progressive)`);
+              this.initialFileChunksAppended++; // Count appended chunks from initial file
+              log(`📊 Chunk tracking: appended=${this.initialFileChunksAppended}, fromParser=${this.initialFileChunksFromParser}, firstSegmentAppended=${this.firstMediaSegmentAppended}`);
               if (!this.firstMediaSegmentAppended) {
                 this.firstMediaSegmentAppended = true;
+                log(`🎯 First media segment appended was ${trackType} segment ${segmentIndex}`);
                 this.onFirstSegmentAppended();
               }
+              this.checkAllInitialFileChunksAppended();
             }
           });
         }
@@ -1309,6 +1359,7 @@ Detailed Timing Breakdown:
               data: videoInit,
               callback: () => {
                 log('Video init segment appended');
+                this.timingMetrics.videoInitAppendTime = Date.now() - this.startTime;
                 if (firstAppend) {
                   this.timingMetrics.firstAppendTime = Date.now() - this.startTime;
                   firstAppend = false;
@@ -1320,7 +1371,10 @@ Detailed Timing Breakdown:
               type: 'append',
               sourceBuffer: audioSourceBuffer,
               data: audioInit,
-              callback: () => log('Audio init segment appended')
+              callback: () => {
+                log('Audio init segment appended');
+                this.timingMetrics.audioInitAppendTime = Date.now() - this.startTime;
+              }
             });
           }
         }
@@ -1332,20 +1386,70 @@ Detailed Timing Breakdown:
           }
           
           // Mark initial data as processed
-          this.initialDataProcessed = true;
-          log('Initial media file fully processed');
+          this.initialFileProcessingComplete = true;
+          log(`Initial media file fully processed. Found ${this.initialFileChunksFromParser} media chunks from progressive parsing.`);
+          
+          // Check if we can mark completion now
+          this.checkAllInitialFileChunksAppended();
+          
+          // Also check again after a short delay to ensure all pending append operations complete
+          setTimeout(() => {
+            if (this.isActive) {
+              this.checkAllInitialFileChunksAppended();
+            }
+          }, 100);
         }
 
         onFirstSegmentAppended() {
+          log('🎬 onFirstSegmentAppended called - preparing to call video.play()');
           // Set currentTime to start playback
           if (this.video.buffered.length > 0) {
             try {
               log('Setting currentTime to start of buffered range:', this.video.buffered.start(0));
               this.video.currentTime = this.video.buffered.start(0);
+              
+              // Now call video.play() when we have content ready
+              this.video.play().then(() => {
+                this.timingMetrics.videoPlayTime = Date.now() - this.startTime;
+                log(`✓ video.play() called successfully at ${this.timingMetrics.videoPlayTime}ms`);
+              }).catch(e => {
+                log('❌ Error calling video.play():', e.message);
+              });
             } catch (e) {
               log('Error setting currentTime:', e.message);
             }
+          } else {
+            log('⚠️ No buffered content available for video.play()');
           }
+        }
+
+        checkAllInitialFileChunksAppended() {
+          // Add comprehensive debug logging
+          log(`Initial file chunk check: fromParser=${this.initialFileChunksFromParser}, appended=${this.initialFileChunksAppended}, processingComplete=${this.initialFileProcessingComplete}, timing set=${!!this.timingMetrics.allMediaChunksAppendedTime}`);
+          log(`Media segment counts: video=${this.mediaSegmentCount.video}, audio=${this.mediaSegmentCount.audio}`);
+          
+          // Check if all chunks from initial file have been appended
+          if (this.initialFileProcessingComplete && 
+              this.initialFileChunksAppended >= this.initialFileChunksFromParser && 
+              this.initialFileChunksFromParser > 0 &&
+              !this.timingMetrics.allMediaChunksAppendedTime) {
+            this.timingMetrics.allMediaChunksAppendedTime = Date.now() - this.startTime;
+            log(`✓ All media chunks from initial file appended at ${this.timingMetrics.allMediaChunksAppendedTime}ms (${this.initialFileChunksFromParser} chunks)`);
+          }
+          
+          // Alternative check: if processing is complete but no chunks were found in progressive parsing,
+          // it might mean all chunks were in the media segments parsed at the end
+          if (this.initialFileProcessingComplete && 
+              this.initialFileChunksFromParser === 0 && 
+              this.mediaSegmentCount.video > 0 && 
+              this.mediaSegmentCount.audio > 0 &&
+              !this.timingMetrics.allMediaChunksAppendedTime) {
+            this.timingMetrics.allMediaChunksAppendedTime = Date.now() - this.startTime;
+            log(`✓ All media chunks from initial file appended at ${this.timingMetrics.allMediaChunksAppendedTime}ms (fallback: no progressive chunks, using segment count)`);
+          }
+          
+          // Debug timing metrics after potential updates
+          log(`Updated timing metrics:`, JSON.stringify(this.timingMetrics, null, 2));
         }
 
         scheduleNextSegmentFetch() {
@@ -1394,6 +1498,7 @@ Detailed Timing Breakdown:
                   type: 'append',
                   sourceBuffer: videoSB,
                   data: seg
+                  // No callback needed for live segments
                 });
               });
             }
@@ -1404,6 +1509,7 @@ Detailed Timing Breakdown:
                   type: 'append',
                   sourceBuffer: audioSB,
                   data: seg
+                  // No callback needed for live segments
                 });
               });
             }
