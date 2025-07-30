@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BJSN Player - Harmonic Inc</title>
+  <link rel="dns-prefetch" href="//tiktok-demo-ap-origin.trymonic.com">
   <style>
     :root {
       /* Harmonic Inc Brand Colors */
@@ -1160,10 +1161,8 @@ Note: "All Media Chunks" refers to all chunks from the initial file only (not li
           
           perfMetricsElement.textContent = details;
           
-          // Continue updating for a bit longer to catch late timing metrics
-          if (!this.playingTime || elapsed < 10000) { // Keep updating for 10 seconds
-            setTimeout(() => this.updateElapsedTime(), 100);
-          }
+          // Continue updating to catch late timing metrics
+          setTimeout(() => this.updateElapsedTime(), 100);
         }
 
         stop() {
