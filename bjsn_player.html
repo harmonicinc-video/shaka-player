@@ -856,10 +856,8 @@
             } else if (type === 'moof') {
               // Store moof and wait for matching mdat
               this.pendingMoof = box;
-              log('moof box found, size:', size);
             } else if (type === 'mdat' && this.pendingMoof) {
               // We have a complete moof/mdat pair - process it immediately
-              log('mdat box found, size:', size, ' - processing media segment');
               this.processMediaSegment(this.pendingMoof, box);
               this.pendingMoof = null;
             }
@@ -1130,9 +1128,8 @@ Note: "All Media Chunks" refers to all chunks from the initial file only (not li
         updateElapsedTime() {
           if (!this.isActive) return;
           
-          const elapsed = Date.now() - this.startTime;
           let status = this.playingTime ? 'Playing' : 'Loading...';
-          let details = `Elapsed Time: ${elapsed}ms\nStatus: ${status}`;
+          let details = `Status: ${status}`;
           
           // Add completed timing details if available
           if (this.timingMetrics.sourceOpenTime) {
@@ -1286,15 +1283,7 @@ Note: "All Media Chunks" refers to all chunks from the initial file only (not li
             sourceBuffer: sourceBuffer,
             data: segmentData,
             callback: () => {
-              log(`${trackType} segment ${segmentIndex} appended (progressive)`);
-              
-              // Add debug info about buffer state after append
-              log(`🔍 After ${trackType} append: sourceBuffer.buffered =`, formatTimeRanges(sourceBuffer.buffered));
-              log(`🔍 After ${trackType} append: video.buffered =`, formatTimeRanges(this.video.buffered));
-              log(`🔍 After ${trackType} append: video.readyState =`, this.video.readyState);
-              
               this.initialFileChunksAppended++; // Count appended chunks from initial file
-              log(`📊 Chunk tracking: appended=${this.initialFileChunksAppended}, fromParser=${this.initialFileChunksFromParser}, firstSegmentAppended=${this.firstMediaSegmentAppended}`);
               if (!this.firstMediaSegmentAppended) {
                 this.firstMediaSegmentAppended = true;
                 log(`🎯 First media segment appended was ${trackType} segment ${segmentIndex}`);
@@ -1462,10 +1451,6 @@ Note: "All Media Chunks" refers to all chunks from the initial file only (not li
         }
 
         checkAllInitialFileChunksAppended() {
-          // Add comprehensive debug logging
-          log(`Initial file chunk check: fromParser=${this.initialFileChunksFromParser}, appended=${this.initialFileChunksAppended}, processingComplete=${this.initialFileProcessingComplete}, timing set=${!!this.timingMetrics.allMediaChunksAppendedTime}`);
-          log(`Media segment counts: video=${this.mediaSegmentCount.video}, audio=${this.mediaSegmentCount.audio}`);
-          
           // Check if all chunks from initial file have been appended
           if (this.initialFileProcessingComplete && 
               this.initialFileChunksAppended >= this.initialFileChunksFromParser && 
@@ -1485,9 +1470,6 @@ Note: "All Media Chunks" refers to all chunks from the initial file only (not li
             this.timingMetrics.allMediaChunksAppendedTime = Date.now() - this.startTime;
             log(`✓ All media chunks from initial file appended at ${this.timingMetrics.allMediaChunksAppendedTime}ms (fallback: no progressive chunks, using segment count)`);
           }
-          
-          // Debug timing metrics after potential updates
-          log(`Updated timing metrics:`, JSON.stringify(this.timingMetrics, null, 2));
         }
 
         scheduleNextSegmentFetch() {
