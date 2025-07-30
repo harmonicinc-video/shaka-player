@@ -352,7 +352,7 @@
 
     <div class="main-content">
       <div class="video-section">
-        <video controls autoplay></video>
+        <video controls></video>
       </div>
 
       <div class="info-panel">
@@ -1054,6 +1054,30 @@
           // Register event listeners early to catch autoplay events.
           this.video.addEventListener('playing', () => this.onPlaying());
           this.video.addEventListener('play', () => this.onPlay());
+          
+          // Track when video actually starts playing (for accurate videoPlayTime)
+          this.video.addEventListener('play', () => {
+            if (!this.timingMetrics.videoPlayTime) {
+              this.timingMetrics.videoPlayTime = Date.now() - this.startTime;
+              log(`🎬 Video play event fired at ${this.timingMetrics.videoPlayTime}ms`);
+            }
+          });
+          
+          // Add canplay event listener as alternative trigger for playback
+          this.video.addEventListener('canplay', () => {
+            log('🎵 canplay event fired - video has enough data to start playing');
+            if (this.video.paused && !this.timingMetrics.videoPlayTime) {
+              log('🚀 Attempting to play video on canplay event');
+              this.video.play().then(() => {
+                if (!this.timingMetrics.videoPlayTime) {
+                  this.timingMetrics.videoPlayTime = Date.now() - this.startTime;
+                  log(`✅ video.play() from canplay succeeded at ${this.timingMetrics.videoPlayTime}ms`);
+                }
+              }).catch(e => {
+                log('❌ video.play() from canplay failed:', e.message);
+              });
+            }
+          });
 
           // Start elapsed time display update
           this.updateElapsedTime();
@@ -1263,6 +1287,12 @@ Note: "All Media Chunks" refers to all chunks from the initial file only (not li
             data: segmentData,
             callback: () => {
               log(`${trackType} segment ${segmentIndex} appended (progressive)`);
+              
+              // Add debug info about buffer state after append
+              log(`🔍 After ${trackType} append: sourceBuffer.buffered =`, formatTimeRanges(sourceBuffer.buffered));
+              log(`🔍 After ${trackType} append: video.buffered =`, formatTimeRanges(this.video.buffered));
+              log(`🔍 After ${trackType} append: video.readyState =`, this.video.readyState);
+              
               this.initialFileChunksAppended++; // Count appended chunks from initial file
               log(`📊 Chunk tracking: appended=${this.initialFileChunksAppended}, fromParser=${this.initialFileChunksFromParser}, firstSegmentAppended=${this.firstMediaSegmentAppended}`);
               if (!this.firstMediaSegmentAppended) {
@@ -1401,26 +1431,34 @@ Note: "All Media Chunks" refers to all chunks from the initial file only (not li
         }
 
         onFirstSegmentAppended() {
-          log('🎬 onFirstSegmentAppended called - preparing to call video.play()');
-          // Set currentTime to start playback
-          if (this.video.buffered.length > 0) {
-            try {
-              log('Setting currentTime to start of buffered range:', this.video.buffered.start(0));
-              this.video.currentTime = this.video.buffered.start(0);
-              
-              // Now call video.play() when we have content ready
-              this.video.play().then(() => {
-                this.timingMetrics.videoPlayTime = Date.now() - this.startTime;
-                log(`✓ video.play() called successfully at ${this.timingMetrics.videoPlayTime}ms`);
-              }).catch(e => {
-                log('❌ Error calling video.play():', e.message);
-              });
-            } catch (e) {
-              log('Error setting currentTime:', e.message);
+          log('🎬 onFirstSegmentAppended called - relying on canplay event for playback');
+          
+          // Check if video is already playing (due to autoplay or previous play() call)
+          if (!this.video.paused) {
+            log('📺 Video is already playing, no need to call play()');
+            if (!this.timingMetrics.videoPlayTime) {
+              this.timingMetrics.videoPlayTime = Date.now() - this.startTime;
+              log(`✓ Video already playing, recorded time: ${this.timingMetrics.videoPlayTime}ms`);
             }
-          } else {
-            log('⚠️ No buffered content available for video.play()');
+            return;
           }
+          
+          // Add debug logging for buffer state
+          log('🔍 Debug: video.buffered.length =', this.video.buffered.length);
+          log('🔍 Debug: video.readyState =', this.video.readyState);
+          log('🔍 Debug: MediaSource.readyState =', this.ms.readyState);
+          
+          // Check SourceBuffer states
+          if (this.stateMachine && this.stateMachine.sourceBuffers) {
+            const videoSB = this.stateMachine.sourceBuffers.video;
+            const audioSB = this.stateMachine.sourceBuffers.audio;
+            log('🔍 Debug: video SourceBuffer.buffered =', formatTimeRanges(videoSB.buffered));
+            log('🔍 Debug: audio SourceBuffer.buffered =', formatTimeRanges(audioSB.buffered));
+            log('🔍 Debug: video SourceBuffer.updating =', videoSB.updating);
+            log('🔍 Debug: audio SourceBuffer.updating =', audioSB.updating);
+          }
+          
+          log('⏳ Waiting for canplay event to trigger playback...');
         }
 
         checkAllInitialFileChunksAppended() {
