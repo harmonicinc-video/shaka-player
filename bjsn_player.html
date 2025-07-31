@@ -1131,12 +1131,16 @@ Note: "All Media Chunks" refers to all chunks from the initial file only (not li
           
           let status = this.playingTime ? 'Playing' : 'Loading...';
           let details = `Status: ${status}`;
-          
+
+          // Add video start latency if available
+          if (this.timingMetrics.videoPlayTime) {
+            details += `\n  Video Start Latency: ${this.timingMetrics.videoPlayTime}ms`;
+          }
           // Add completed timing details if available
           if (this.timingMetrics.sourceOpenTime) {
             details += `\n\nTiming Progress:`;
             details += `\n  Source Open: ${this.timingMetrics.sourceOpenTime}ms`;
-          }
+          } 
           if (this.timingMetrics.firstByteTime) {
             details += `\n  First Byte: ${this.timingMetrics.firstByteTime}ms`;
           }
@@ -1152,9 +1156,7 @@ Note: "All Media Chunks" refers to all chunks from the initial file only (not li
           if (this.timingMetrics.firstMediaSegmentTime) {
             details += `\n  First Media: ${this.timingMetrics.firstMediaSegmentTime}ms`;
           }
-          if (this.timingMetrics.videoPlayTime) {
-            details += `\n  video.play(): ${this.timingMetrics.videoPlayTime}ms`;
-          }
+          
           if (this.timingMetrics.allMediaChunksAppendedTime) {
             details += `\n  All Initial Chunks: ${this.timingMetrics.allMediaChunksAppendedTime}ms`;
           }
