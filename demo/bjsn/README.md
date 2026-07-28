@@ -79,6 +79,23 @@ decoded bytes for *both* tracks, not just whether a picture appears:
 Result (2026-07-28): **all three PASS**, with identical decoded byte counts
 (54281 video / 8582 audio). Option A chosen. Details in the plan, §3.1.
 
+The segment under test defaults to the committed fixture and can be pointed
+anywhere via the URL field or a `?url=` query parameter, so a run is shareable
+and reproducible:
+
+```
+/demo/bjsn/spike-muxed-buffer.html?url=/testdata/bjsn/generated/media_11905.mp4
+```
+
+It must be an **initial** segment (one containing `moov`); subsequent segments
+carry no init and are rejected with an explanatory message. Cross-origin URLs
+need CORS on the serving origin.
+
+Re-run on the generated asset (2026-07-29): all three PASS, buffered
+`[2333.176–2335.196]`, 142118 video / 5081 audio bytes decoded, with mode B
+reporting `video ts=1000, audio ts=44100` — confirming per-track timescales are
+read rather than assumed.
+
 > **Chrome gates media on tab visibility, not focus.** In a hidden or
 > backgrounded tab, a MediaSource never attaches and muted elements get paused
 > as "video-only background media" — so the page reports **INCONCLUSIVE**, not

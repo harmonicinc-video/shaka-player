@@ -3,8 +3,8 @@
   BJSN Phase 1 spike: single muxed SourceBuffer vs. demux.
 
   Decides §3.1 of docs/design/bjsn-integration-plan-v2.md. Runs three modes
-  against test/test/assets/bjsn-initial-segment.mp4 and reports which ones
-  actually decode both video and audio:
+  against a BJSN initial segment and reports which ones actually decode both
+  video and audio:
 
     A1  one SourceBuffer, both codecs, ONE append of the whole stripped file
     A2  one SourceBuffer, both codecs, init appended separately from media
@@ -13,6 +13,11 @@
         (the reference player's shape -- control)
 
   Serve the repo root over HTTP and open /demo/bjsn/spike-muxed-buffer.html
+
+  The segment under test defaults to the committed fixture and can be changed
+  in the URL field or via ?url=<segment>, so a run is shareable:
+
+    /demo/bjsn/spike-muxed-buffer.html?url=/testdata/bjsn/generated/media_11905.mp4
 -->
 <html lang="en">
 <head>
@@ -33,16 +38,32 @@
     .fail { color: #bf616a; font-weight: bold; }
     #verdict { border: 2px solid #5e81ac; padding: 12px; margin-top: 18px;
                border-radius: 6px; }
+    #bar { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+    #url { flex: 1; font: inherit; padding: 6px 8px; color: #d8dee9;
+           background: #0d0f12; border: 1px solid #3b4252; border-radius: 4px; }
+    #run { font: inherit; padding: 6px 14px; cursor: pointer; color: #14161a;
+           background: #88c0d0; border: 0; border-radius: 4px;
+           font-weight: bold; }
+    #run:disabled { opacity: .5; cursor: default; }
+    .hint { color: #6c7686; margin: 0 0 14px; }
   </style>
 </head>
 <body>
   <h1>BJSN Phase 1 spike — muxed SourceBuffer vs demux</h1>
+  <div id="bar">
+    <input id="url" type="text" spellcheck="false"
+           placeholder="URL of a BJSN initial segment">
+    <button id="run">Run</button>
+  </div>
+  <p class="hint">Same-origin paths work directly; a cross-origin URL needs CORS
+    on the server. Chrome only runs the media pipeline in a <b>visible</b>
+    window — a hidden tab reports INCONCLUSIVE.</p>
   <div id="modes"></div>
   <div id="verdict">running…</div>
 
   <script src="bjsn_utils.js"></script>
   <script>
-  const FIXTURE = '/test/test/assets/bjsn-initial-segment.mp4';
+  const DEFAULT_FIXTURE = '/test/test/assets/bjsn-initial-segment.mp4';
   const PLAY_MS = 2500;
   const U = BjsnUtils.Mp4BoxUtils;
   const P = BjsnUtils.BjsnMp4Processor;
@@ -344,12 +365,46 @@
     return {...verdict, mime: `${vMime} + ${aMime}`};
   }
 
-  (async () => {
+  /**
+   * Tear down a previous run: stop decoding and release the object URLs, or
+   * old videos keep running behind the new cards.
+   */
+  function resetUi() {
+    for (const v of document.querySelectorAll('#modes video')) {
+      try {
+        v.pause();
+        if (v.src.startsWith('blob:')) {
+          URL.revokeObjectURL(v.src);
+        }
+        v.removeAttribute('src');
+        v.load();
+      } catch (e) {
+        log('reset', v.id, e.message);
+      }
+    }
+    document.getElementById('modes').textContent = '';
+    document.getElementById('verdict').textContent = 'running…';
+  }
+
+  async function runAll(segmentUrl) {
+    resetUi();
     const results = {};
     try {
-      const raw = new Uint8Array(
-          await (await fetch(FIXTURE)).arrayBuffer());
-      log('fixture', FIXTURE, raw.length, 'bytes');
+      let response;
+      try {
+        response = await fetch(segmentUrl);
+      } catch (e) {
+        // A cross-origin URL without CORS headers lands here, and the raw
+        // TypeError ("Failed to fetch") does not say why.
+        throw new Error(`fetch failed for ${segmentUrl} — ${e.message}. ` +
+            'If this is cross-origin, the server must send CORS headers.');
+      }
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText} ` +
+            `for ${segmentUrl}`);
+      }
+      const raw = new Uint8Array(await response.arrayBuffer());
+      log('fixture', segmentUrl, raw.length, 'bytes');
 
       const stripped = P.stripBjsnBox(raw);
       log('stripped', stripped.length, 'bytes',
@@ -357,8 +412,29 @@
       log('boxes', U.parseTopLevelBoxes(stripped)
           .map((b) => `${b.type}:${b.size}`).join(' '));
 
+      const boxes = U.parseTopLevelBoxes(stripped);
+      if (!boxes.some((b) => b.type === 'moov')) {
+        // Summarise as "type xN" -- a raw list runs to hundreds of entries on
+        // a real segment and buries the actual message.
+        const counts = new Map();
+        for (const b of boxes) {
+          counts.set(b.type, (counts.get(b.type) || 0) + 1);
+        }
+        const summary = [...counts].map(([t, n]) => n > 1 ? `${t} x${n}` : t)
+            .join(', ');
+        throw new Error('no moov box — this must be a BJSN *initial* segment ' +
+            '(ftyp + moov + bjsn + moof/mdat). Subsequent segments carry no ' +
+            'init and cannot be tested standalone. Boxes found: ' +
+            (summary || '(none)'));
+      }
+
       const codecs = BjsnUtils.BjsnCodecDetector.detectCodecsFromSegment(raw);
       log('codecs', JSON.stringify(codecs));
+      if (!codecs || !codecs.video || !codecs.audio) {
+        throw new Error('codec detection did not find both a video and an ' +
+            `audio track (got ${JSON.stringify(codecs)}). All three modes ` +
+            'need both.');
+      }
 
       // Each mode is isolated: a stall or throw in one must not prevent the
       // others from reporting, or we learn nothing from the run.
@@ -420,10 +496,47 @@
       recommendation = 'Take Option B (demux via transmuxer plugin). A ' +
           'single muxed SourceBuffer did not decode both tracks.';
     }
-    const text = [line('A1'), line('A2'), line('B'), '', recommendation];
+    const text = [`segment: ${segmentUrl}`, '',
+      line('A1'), line('A2'), line('B'), '', recommendation];
     document.getElementById('verdict').textContent = text.join('\n');
     log('VERDICT', text.join(' || '));
-  })();
+  }
+
+  // --- URL wiring -----------------------------------------------------------
+  const urlField = document.getElementById('url');
+  const runButton = document.getElementById('run');
+
+  function currentUrl() {
+    return new URL(location.href).searchParams.get('url') || DEFAULT_FIXTURE;
+  }
+
+  async function go() {
+    const segmentUrl = urlField.value.trim() || DEFAULT_FIXTURE;
+    urlField.value = segmentUrl;
+    // Keep ?url= in sync so the run is shareable and survives a reload.
+    const shareable = new URL(location.href);
+    shareable.searchParams.set('url', segmentUrl);
+    history.replaceState(null, '', shareable);
+
+    runButton.disabled = true;
+    runButton.textContent = 'Running…';
+    try {
+      await runAll(segmentUrl);
+    } finally {
+      runButton.disabled = false;
+      runButton.textContent = 'Run';
+    }
+  }
+
+  runButton.addEventListener('click', go);
+  urlField.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      go();
+    }
+  });
+
+  urlField.value = currentUrl();
+  go();
   </script>
 </body>
 </html>
