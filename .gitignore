@@ -9,6 +9,7 @@ coverage/
 .babel-cache
 .idea/
 
-# Scratch BJSN captures and stripper output.  The canonical fixture is committed
-# at test/test/assets/bjsn-initial-segment.mp4 -- see demo/bjsn/README.md.
+# Scratch BJSN captures, generated assets and stripper output.  The committed
+# fixtures are test/test/assets/bjsn-initial-segment.mp4 (real capture) and
+# test/test/assets/bjsn/ (synthetic 5-segment set) -- see demo/bjsn/README.md.
 testdata/

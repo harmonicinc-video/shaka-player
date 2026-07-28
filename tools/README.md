@@ -1,4 +1,59 @@
-# BJSN Box Stripper CLI Tool
+# BJSN tools
+
+Two command-line utilities for working with BJSN (Bytedance JSON) CMAF content,
+as described in TikTok's CMAF CDN distribution architecture:
+
+| Script | Purpose |
+| --- | --- |
+| `bjsn-stripper-cli.js` | Inspect a captured segment, or strip its `bjsn` box |
+| `bjsn-make-test-asset.js` | Generate a synthetic multi-segment BJSN asset with ffmpeg |
+
+Both are plain Node scripts with no dependencies beyond Node itself
+(`bjsn-make-test-asset.js` also shells out to ffmpeg).
+
+---
+
+# bjsn-make-test-asset.js
+
+Generates a synthetic multi-segment BJSN asset. We have only one real captured
+segment, which is not enough to test timeline mapping or live segment
+continuation, so this produces a controllable stand-in.
+
+```bash
+node tools/bjsn-make-test-asset.js --out testdata/bjsn/generated \
+  --segments 10 --duration 2.0 --start-time 2333.176 \
+  --seq-num 11905 --template 'media_${num}.mp4'
+
+# check the result's structure
+node tools/bjsn-make-test-asset.js --verify testdata/bjsn/generated
+```
+
+Output mirrors the real capture's structure: one `traf` per `moof`, video and
+audio moofs interleaved roughly 1:3, `tfdt` starting at a large non-zero media
+time and continuing seamlessly across segment files, an initial segment carrying
+`ftyp`+`moov`+`bjsn` and subsequent segments carrying neither `ftyp` nor `moov`.
+
+The video has a burned-in timecode and frame counter, and the audio beeps at each
+whole second, so A/V sync can be judged by eye and ear.
+
+**`drawtext` requirement.** The burned-in timecode needs an ffmpeg built with
+libfreetype. Homebrew's default `ffmpeg` may lack it; the script auto-detects a
+`drawtext`-capable binary and errors clearly if it finds none.
+
+**Divergences from the real capture** — this asset is a stand-in, not a replica:
+
+- Audio `mdhd` timescale is the sample rate (44100); the real capture uses 1000.
+  Useful in that it forces per-track timescale reading, but it does not cover the
+  real timescale-1000 audio case.
+- A/V start skew is ~0; the real capture has ~10 ms. So it does not exercise the
+  "t0 = minimum across tracks" path.
+- One synthetic gear, versus nine in the real capture.
+- Subsequent segments contain a `bjsn` box. That is an **assumption** — only an
+  initial segment has ever been captured.
+
+---
+
+# bjsn-stripper-cli.js
 
 A command-line utility for removing BJSN (Bytedance JSON) boxes from MP4 files. This tool is designed to work with CMAF segments that contain BJSN boxes as described in TikTok's CMAF CDN distribution architecture.
 
@@ -172,12 +227,30 @@ The tool includes comprehensive error handling:
 - For very large files, consider using the streaming version in the Shaka Player library
 - The box parsing is optimized for speed with minimal memory allocations
 
+## Segment kinds
+
+Both BJSN segment kinds are accepted:
+
+- an **initial** segment (`ftyp` + `moov` + `bjsn` + fragments) reports each
+  track's handler, so tracks appear as `video`/`audio`;
+- a **subsequent** segment (`styp` + `bjsn` + fragments, no `moov`) can be
+  inspected and stripped too, but since the handler types live in the `moov`,
+  its tracks are labelled `track1`, `track2`, … by the IDs found in the
+  fragment headers.
+
+`--split` needs the `moov` to build per-track init segments, so it only works on
+an initial segment and fails with an explanatory message otherwise.
+
+A file that is neither — no `ftyp`+`moov` and no `moof` — is rejected rather than
+reported as a vacuous success.
+
 ## Limitations
 
 - Only works with MP4 files
 - Loads entire file into memory
 - Basic MP4 box parsing (doesn't handle all edge cases)
 - No support for fragmented MP4 files with multiple BJSN boxes
+- `--split` requires an initial segment (see "Segment kinds" above)
 
 ## Contributing
 

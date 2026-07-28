@@ -279,27 +279,44 @@ class BjsnMp4Processor {
     const moofBoxes = boxes.filter(b => b.type === 'moof');
     const mdatBoxes = boxes.filter(b => b.type === 'mdat');
 
-    if (!ftypBox || !moovBox) {
-      throw new Error('Missing required ftyp or moov box');
+    // Only a BJSN *initial* segment carries ftyp+moov.  Subsequent segments
+    // are styp (+bjsn) + moof/mdat, and must still be processable -- refusing
+    // them means the tool cannot inspect 9 out of every 10 captured files.
+    const hasInit = !!(ftypBox && moovBox);
+
+    // Relaxing the old "must have ftyp+moov" rule would otherwise let any
+    // non-MP4 file through as a vacuous success, so require that the file look
+    // like one thing or the other: an initial segment, or fragments.
+    if (!hasInit && moofBoxes.length === 0) {
+      const found = boxes.length ?
+          [...new Set(boxes.map(b => b.type))].join(', ') : 'none';
+      throw new Error(
+          'not a recognisable MP4: expected either ftyp+moov (an initial ' +
+          'segment) or at least one moof (a subsequent segment). ' +
+          `Top-level boxes found: ${found}`);
     }
 
-    // Parse tracks from moov
-    const tracks = BjsnMp4Processor.parseTracksFromMoov(moovBox.data);
-    
-    // Create init segments for each track
+    // With a moov we know each track's handler; without one, all we can learn
+    // is the set of track IDs appearing in the fragments.
+    const tracks = hasInit ?
+        BjsnMp4Processor.parseTracksFromMoov(moovBox.data) :
+        BjsnMp4Processor.parseTracksFromMoofs(moofBoxes);
+
     const initSegments = {};
-    tracks.forEach(track => {
-      const initSegment = BjsnMp4Processor.createInitSegmentForTrack(
-        ftypBox.data, 
-        moovBox.data, 
-        track.id,
-        tracks
-      );
-      initSegments[track.type] = {
-        trackId: track.id,
-        data: initSegment
-      };
-    });
+    if (hasInit) {
+      tracks.forEach(track => {
+        const initSegment = BjsnMp4Processor.createInitSegmentForTrack(
+          ftypBox.data,
+          moovBox.data,
+          track.id,
+          tracks
+        );
+        initSegments[track.type] = {
+          trackId: track.id,
+          data: initSegment
+        };
+      });
+    }
 
     // Group media segments by track
     const mediaSegments = BjsnMp4Processor.groupMediaSegmentsByTrack(
@@ -309,12 +326,35 @@ class BjsnMp4Processor {
     );
 
     return {
+      hasInit,
       tracks,
       initSegments,
       mediaSegments,
+      moofCount: moofBoxes.length,
+      mdatCount: mdatBoxes.length,
       originalSize: data.length,
       strippedSize: strippedData.length
     };
+  }
+
+  /**
+   * Derive the track list from fragment headers, for segments with no moov.
+   * Only the IDs are knowable here -- the handler type lives in the moov -- so
+   * tracks are labelled "trackN" rather than video/audio.
+   */
+  static parseTracksFromMoofs(moofBoxes) {
+    const ids = [];
+    moofBoxes.forEach(moofBox => {
+      const trackId = BjsnMp4Processor.getTrackIdFromMoof(moofBox.data);
+      if (trackId !== null && !ids.includes(trackId)) {
+        ids.push(trackId);
+      }
+    });
+    return ids.sort((a, b) => a - b).map(id => ({
+      id,
+      type: `track${id}`,
+      handler: 'unknown (no moov in this segment)'
+    }));
   }
 
   /**
@@ -525,33 +565,32 @@ class BjsnMp4Processor {
    * Group media segments by track
    */
   static groupMediaSegmentsByTrack(moofBoxes, mdatBoxes, tracks) {
-    const result = {
-      video: [],
-      audio: []
-    };
-    
+    // Keyed by whatever the track list calls each track, so this works for
+    // video/audio from a moov and for trackN derived from fragment headers.
+    // Previously the keys were hardcoded to video/audio, which silently
+    // dropped any track that was neither.
+    const result = {};
+    tracks.forEach(track => {
+      result[track.type] = [];
+    });
+
     moofBoxes.forEach((moofBox, index) => {
       if (index < mdatBoxes.length) {
         const mdatBox = mdatBoxes[index];
         const trackId = BjsnMp4Processor.getTrackIdFromMoof(moofBox.data);
-        
+
         if (trackId !== null) {
           const track = tracks.find(t => t.id === trackId);
           if (track) {
             const segment = new Uint8Array(moofBox.data.length + mdatBox.data.length);
             segment.set(moofBox.data, 0);
             segment.set(mdatBox.data, moofBox.data.length);
-            
-            if (track.type === 'video') {
-              result.video.push(segment);
-            } else if (track.type === 'audio') {
-              result.audio.push(segment);
-            }
+            result[track.type].push(segment);
           }
         }
       }
     });
-    
+
     return result;
   }
 
@@ -722,9 +761,19 @@ async function main() {
       }
       
       const processed = BjsnMp4Processor.processFile(data);
+
+      console.log('\n📊 Segment kind:',
+          processed.hasInit ?
+              'initial (has ftyp + moov)' :
+              'subsequent (no ftyp/moov — init lives in the initial segment)');
+      console.log('  Fragments:', processed.moofCount, 'moof /',
+          processed.mdatCount, 'mdat');
+
       console.log('\n📊 Tracks:');
       processed.tracks.forEach(track => {
-        console.log(`  Track ${track.id}: ${track.type} (${track.handler})`);
+        const count = (processed.mediaSegments[track.type] || []).length;
+        console.log(`  Track ${track.id}: ${track.type} (${track.handler})` +
+            ` — ${count} fragments`);
       });
       
       if (detectCodec) {
@@ -750,8 +799,15 @@ async function main() {
     console.log('  📊 Found', processed.tracks.length, 'tracks');
     
     if (splitMode) {
+      if (!processed.hasInit) {
+        throw new Error(
+            'cannot split: this segment has no moov, so per-track init ' +
+            'segments cannot be built. Only a BJSN initial segment carries ' +
+            'init. Run without --split to strip the bjsn box, or point ' +
+            '--split at the initial segment.');
+      }
       console.log('\n🔪 Creating separate segments...');
-      
+
       // Write init segments
       for (const [type, segment] of Object.entries(processed.initSegments)) {
         const filename = `${outputPrefix}_${type}_init.mp4`;

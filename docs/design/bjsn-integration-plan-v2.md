@@ -392,11 +392,15 @@ deliberate one-way-ish door for multi-gear.
 - **In-band `bjsn` refresh.** Reading manifest state out of media segments
   inverts Shaka's parser→streamer data flow. Keep the write path narrow: one
   method on the parser, called from one place.
-- **Fixtures.** Live TikTok origins rotate. One initial segment is committed
-  (`test/test/assets/bjsn-initial-segment.mp4`), which is enough for parser and
-  codec-detection tests but *not* for timeline or live-continuation work. Capture
-  a run of consecutive segments (initial + ~10) per gear into `testdata/` now,
-  before the origin changes under you; promote only what a test needs.
+- **Fixtures.** Live TikTok origins rotate. One real initial segment is committed
+  (`test/test/assets/bjsn-initial-segment.mp4`), plus a synthetic 5-segment set
+  (`test/test/assets/bjsn/`) from `tools/bjsn-make-test-asset.js` which unblocks
+  timeline and continuation work. The synthetic set is a stand-in, not a replica:
+  audio timescale 44100 rather than 1000, ~0 A/V start skew rather than ~10 ms,
+  one gear rather than nine, and a `bjsn` box in subsequent segments that is an
+  assumption rather than an observation. **A run of consecutive *real* segments is
+  still worth capturing** before the origin changes, and Phase 5 should not be
+  signed off on synthetic data alone.
 
 ## 8. Decisions needed before Phase 2
 
