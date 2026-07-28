@@ -52,7 +52,19 @@ const commonNoRestrictedSyntax = [
 
 export default [
   {
-    ignores: ['!**/eslint.config.mjs', 'build/wrapper.template.js'],
+    ignores: [
+      '!**/eslint.config.mjs',
+      'build/wrapper.template.js',
+      // Standalone BJSN reference player.  Not part of the library and not
+      // compiled; it uses syntax newer than this config's ecmaVersion (object
+      // spread, class static property initializers).  Its logic is being
+      // ported into lib/util/ with full lint coverage -- see
+      // docs/design/bjsn-integration-plan-v2.md, Phase 2.
+      'demo/bjsn/*.js',
+      // Standalone Node CLI for inspecting BJSN captures.  A dev tool, not
+      // shipped code, and not written against this config's browser globals.
+      'tools/*.js',
+    ],
   },
   js.configs.recommended,
   jsdoc.configs['flat/recommended-error'],

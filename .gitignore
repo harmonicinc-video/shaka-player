@@ -8,3 +8,7 @@ coverage/
 .vscode
 .babel-cache
 .idea/
+
+# Scratch BJSN captures and stripper output.  The canonical fixture is committed
+# at test/test/assets/bjsn-initial-segment.mp4 -- see demo/bjsn/README.md.
+testdata/
