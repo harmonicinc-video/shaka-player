@@ -64,6 +64,26 @@ Three 9-byte files containing the string `Not Found` were removed from this repo
 during the v2 cleanup — check for that failure mode before assuming a capture
 worked.
 
+## Phase 1 spike: `spike-muxed-buffer.html`
+
+Decides §3.1 of the integration plan — whether a single SourceBuffer declaring
+both codecs can take the interleaved BJSN file, or whether the tracks must be
+demuxed. Runs three shapes against the committed fixture and judges each on
+decoded bytes for *both* tracks, not just whether a picture appears:
+
+- **A1** one SourceBuffer, both codecs, single append of the whole stripped file
+- **A2** one SourceBuffer, both codecs, init appended separately from media
+- **B** two SourceBuffers, per-track init, demuxed — the shape this player uses,
+  included as a control so a broken harness cannot be mistaken for a real result
+
+Result (2026-07-28): **all three PASS**, with identical decoded byte counts
+(54281 video / 8582 audio). Option A chosen. Details in the plan, §3.1.
+
+> **Chrome gates media on tab visibility, not focus.** In a hidden or
+> backgrounded tab, a MediaSource never attaches and muted elements get paused
+> as "video-only background media" — so the page reports **INCONCLUSIVE**, not
+> FAIL. Bring the window to the front before reading any verdict.
+
 ## Inspecting segments
 
 `tools/bjsn-stripper-cli.js` reads and strips `bjsn` boxes offline:

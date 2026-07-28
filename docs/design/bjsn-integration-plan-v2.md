@@ -121,11 +121,53 @@ exactly.
   small in-memory cache keyed by URI with a 2–3 segment TTL. That cache is new
   surface area and a likely source of subtle bugs.
 
-**Spike (target: half a day).** In the standalone harness, append the
-`bjsn`-stripped initial file to a single SourceBuffer created with both codecs,
-then keep appending stripped subsequent files. If it plays with correct A/V
-sync, take Option A. If not, take Option B. Record the result in this document
-before writing any `lib/` code.
+### Spike result (2026-07-28): **take Option A**
+
+Run via `demo/bjsn/spike-muxed-buffer.html` against
+`test/test/assets/bjsn-initial-segment.mp4` in Chrome. Three modes, all PASS,
+where a pass requires no media error, non-zero video dimensions, the play head
+advancing, **and both tracks reporting decoded bytes** (video-only success is the
+failure mode being hunted — it looks fine on screen):
+
+| Mode | Shape | Result |
+| --- | --- | --- |
+| A1 | one SourceBuffer, both codecs, single append of the whole stripped file | PASS |
+| A2 | one SourceBuffer, both codecs, init appended separately from media | PASS |
+| B | two SourceBuffers, per-track init, demuxed (reference player shape, control) | PASS |
+
+All three decoded **identical byte counts** — 54281 video, 8582 audio — which is
+the strong signal: the muxed buffer is not silently dropping a track. Rendered
+270x480, play head advanced 2.007 s.
+
+**Consequence:** no demux, no per-track init synthesis, no transmuxer plugin, no
+shared-fetch cache. Publish one muxed Stream and append the stripped file
+verbatim. `BjsnTransmuxer` is dropped from §3.2; the only remaining use for a
+transmuxer plugin would be stripping the `bjsn` box, which the manifest parser
+can do instead.
+
+Facts established by the spike that change other sections:
+
+- **`MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E, mp4a.40.2"')`
+  is `true`.** The two-codec string is not an obstacle.
+- **A `styp` box** sits between `moov` and the first `moof`. §2 did not account
+  for it. It must be kept with the media (MSE accepts it); do not let a box
+  filter silently drop it.
+- **Media time starts at ~2333.176 s, not 0**, and **both tracks use
+  timescale 1000** — not the 90000/44100 the reference player falls back to.
+  This is the §3.4 timeline-mapping problem made concrete: `t0` ≈ 2333.176.
+- **A/V skew within the file is ~10 ms** (video buffered from 2333.176, audio
+  from 2333.186). Fine, but it means the two tracks do not start on exactly the
+  same tick — `t0` must be the *minimum* across tracks, as §3.4 says.
+- **One file holds ~2.007 s of media** in 30 video + 86 audio `moof`/`mdat`
+  pairs, interleaved as 1 video + 3 audio. Segment duration is therefore
+  derivable from the first file and must not be hard-coded to 2000 ms the way
+  the reference player does.
+
+**Caveat on scope.** This tested one file from one gear. It does *not* establish
+that appending *consecutive* stripped files to a single muxed SourceBuffer keeps
+A/V in sync over time — that needs the consecutive-segment fixtures called for in
+§7 and is the first thing Phase 5 must verify. Option A is also revisited before
+Phase 7 (ABR), per §3.1.
 
 ### 3.2 Component layout (either option)
 
@@ -133,12 +175,15 @@ before writing any `lib/` code.
 lib/util/bjsn_box_reader.js      MP4 box walk: top-level + child, 64-bit sizes, tfdt, tfhd.track_ID,
                                  mdhd.timescale, hdlr.handlerType, tkhd.track_ID
 lib/util/bjsn_manifest_data.js   bjsn box extraction + JSON schema validation + URL templating
-lib/util/bjsn_init_builder.js    ftyp + moov → per-track init segment (filterMoovForTrack)
 lib/util/bjsn_codec_detector.js  stsd/avcC/hvcC/esds → codec strings, hvc1↔hev1 fallback
 lib/util/bjsn_stream_parser.js   progressive box parser: onBjsn / onInit / onMediaSegment callbacks
 lib/media/bjsn_manifest_parser.js  shaka.extern.ManifestParser
-lib/transmuxer/bjsn_transmuxer.js  Option B only
 ```
+
+Dropped by the Option A spike result: `bjsn_init_builder.js` (no per-track init
+synthesis needed — `ftyp` + `moov` unchanged is the init segment) and
+`lib/transmuxer/bjsn_transmuxer.js` (no demux). `filterMoovForTrack` stays in the
+demo player only; if Phase 7 needs per-track separation for ABR, port it then.
 
 Ports of proven code from `bjsn_utils.js`, not rewrites. v1's
 `lib/util/bjsn_codec_detector.js` is 835 lines against ~300 in `bjsn_utils.js`
@@ -288,10 +333,10 @@ test needs it. Provenance and re-capture recipe: `demo/bjsn/README.md`.
 Each phase ends with a demonstrable, verifiable result. Do not start the next
 phase until the current exit criterion is met.
 
-**Phase 1 — Spike: muxed vs demux** (~0.5 day)
-Extend the standalone harness to append the stripped file to a single
-two-codec SourceBuffer. *Exit:* Option A or B chosen, written into §3.1 with
-the evidence.
+**Phase 1 — Spike: muxed vs demux** — **DONE (2026-07-28)**. Option A chosen;
+evidence and consequences in §3.1. Harness kept at
+`demo/bjsn/spike-muxed-buffer.html` so the decision can be re-checked against
+new fixtures or a new browser.
 
 **Phase 2 — Shared BJSN core in `lib/util/`** (~2 days)
 Port `bjsn_utils.js` into the files listed in §3.2, as `goog.provide`d Closure

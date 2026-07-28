@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<!--
+  BJSN Phase 1 spike: single muxed SourceBuffer vs. demux.
+
+  Decides §3.1 of docs/design/bjsn-integration-plan-v2.md. Runs three modes
+  against test/test/assets/bjsn-initial-segment.mp4 and reports which ones
+  actually decode both video and audio:
+
+    A1  one SourceBuffer, both codecs, ONE append of the whole stripped file
+    A2  one SourceBuffer, both codecs, init appended separately from media
+        (this is the shape Shaka's pipeline produces)
+    B   two SourceBuffers, per-track synthesised init, demuxed moof/mdat
+        (the reference player's shape -- control)
+
+  Serve the repo root over HTTP and open /demo/bjsn/spike-muxed-buffer.html
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>BJSN spike: muxed SourceBuffer vs demux</title>
+  <style>
+    body { font: 13px/1.5 ui-monospace, Menlo, monospace; margin: 20px;
+           background: #14161a; color: #d8dee9; }
+    h1 { font-size: 15px; letter-spacing: .04em; text-transform: uppercase;
+         color: #88c0d0; }
+    .mode { border: 1px solid #2e3440; border-radius: 6px; margin: 14px 0;
+            padding: 12px; }
+    .mode h2 { font-size: 13px; margin: 0 0 8px; color: #ebcb8b; }
+    video { width: 240px; background: #000; vertical-align: top; }
+    .cols { display: flex; gap: 14px; }
+    pre { margin: 0; white-space: pre-wrap; flex: 1; }
+    .pass { color: #a3be8c; font-weight: bold; }
+    .fail { color: #bf616a; font-weight: bold; }
+    #verdict { border: 2px solid #5e81ac; padding: 12px; margin-top: 18px;
+               border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>BJSN Phase 1 spike — muxed SourceBuffer vs demux</h1>
+  <div id="modes"></div>
+  <div id="verdict">running…</div>
+
+  <script src="bjsn_utils.js"></script>
+  <script>
+  const FIXTURE = '/test/test/assets/bjsn-initial-segment.mp4';
+  const PLAY_MS = 2500;
+  const U = BjsnUtils.Mp4BoxUtils;
+  const P = BjsnUtils.BjsnMp4Processor;
+
+  function log(...args) {
+    console.log('[SPIKE]', ...args);
+  }
+
+  /** Build a DOM card for one mode; returns {report, video}. */
+  function makeCard(id, title) {
+    const el = document.createElement('div');
+    el.className = 'mode';
+    el.innerHTML = `<h2>${title}</h2><div class="cols">` +
+        `<video id="v-${id}" muted playsinline controls></video>` +
+        `<pre id="r-${id}"></pre></div>`;
+    document.getElementById('modes').appendChild(el);
+    return {
+      video: el.querySelector('video'),
+      report: el.querySelector('pre'),
+    };
+  }
+
+  function concatBoxes(boxes) {
+    const total = boxes.reduce((n, b) => n + b.data.length, 0);
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const b of boxes) {
+      out.set(b.data, off);
+      off += b.data.length;
+    }
+    return out;
+  }
+
+  const STEP_TIMEOUT_MS = 5000;
+
+  /**
+   * Reject if a step does not settle.  A silent hang tells us nothing, so the
+   * rejection carries whatever state we can still read.
+   */
+  function withTimeout(promise, label, stateFn) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`${label} timed out after ${STEP_TIMEOUT_MS}ms ` +
+            `— state: ${stateFn ? stateFn() : 'n/a'}`));
+      }, STEP_TIMEOUT_MS);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
+
+  /** Append one buffer and resolve on updateend (reject on error). */
+  function appendAndWait(sb, data, ms, video, label) {
+    const p = new Promise((resolve, reject) => {
+      const cleanup = () => {
+        sb.removeEventListener('updateend', onEnd);
+        sb.removeEventListener('error', onErr);
+      };
+      const onEnd = () => {
+        cleanup();
+        resolve();
+      };
+      const onErr = () => {
+        cleanup();
+        reject(new Error('SourceBuffer fired "error" during append'));
+      };
+      sb.addEventListener('updateend', onEnd);
+      sb.addEventListener('error', onErr);
+      try {
+        sb.appendBuffer(data);
+      } catch (e) {
+        cleanup();
+        reject(new Error(`appendBuffer threw ${e.name}: ${e.message}`));
+      }
+    });
+    return withTimeout(p, `append ${label} (${data.length}B)`, () =>
+      `sb.updating=${sb.updating} ms.readyState=${ms.readyState} ` +
+      `video.readyState=${video.readyState} ` +
+      `video.error=${video.error ? video.error.code : 'none'} ` +
+      `buffered=${ranges(sb.buffered)}`);
+  }
+
+  function openMediaSource(video) {
+    const ms = new MediaSource();
+    const p = new Promise((resolve) => {
+      ms.addEventListener('sourceopen', () => resolve(ms), {once: true});
+      // Setting src invokes the media element load algorithm, which attaches
+      // the MediaSource.  Do not also call load() -- that re-runs the
+      // algorithm and can close the MediaSource we just attached.
+      video.src = URL.createObjectURL(ms);
+    });
+    return withTimeout(p, 'sourceopen', () =>
+      `ms.readyState=${ms.readyState} video.readyState=${video.readyState} ` +
+      `video.networkState=${video.networkState}`).then(() => ms);
+  }
+
+  function ranges(tr) {
+    const out = [];
+    for (let i = 0; i < tr.length; i++) {
+      out.push(`[${tr.start(i).toFixed(3)}–${tr.end(i).toFixed(3)}]`);
+    }
+    return out.length ? out.join(' ') : '(none)';
+  }
+
+  /** Play for PLAY_MS and collect decode evidence. */
+  async function measure(video) {
+    const t0 = video.currentTime;
+    let playError = null;
+    try {
+      await video.play();
+    } catch (e) {
+      playError = e.message;
+    }
+    await new Promise((r) => setTimeout(r, PLAY_MS));
+
+    const vBytes = video.webkitVideoDecodedByteCount;
+    const aBytes = video.webkitAudioDecodedByteCount;
+    return {
+      playError,
+      visibility: document.visibilityState,
+      readyState: video.readyState,
+      videoWidth: video.videoWidth,
+      videoHeight: video.videoHeight,
+      startTime: t0,
+      currentTime: video.currentTime,
+      advanced: video.currentTime - t0,
+      videoDecodedBytes: vBytes,
+      audioDecodedBytes: aBytes,
+      mediaError: video.error ? `${video.error.code}: ${video.error.message}` : null,
+      buffered: ranges(video.buffered),
+    };
+  }
+
+  /**
+   * A pass requires: no media error, non-zero video dimensions, the play head
+   * advancing, and BOTH tracks reporting decoded bytes.  Video-only success is
+   * the failure mode we are hunting -- it looks fine on screen.
+   */
+  function judge(m) {
+    // Chrome gates the media pipeline on tab VISIBILITY (not focus): a hidden
+    // tab never attaches a MediaSource, and a muted element in a backgrounded
+    // one gets paused as "video-only background media".  That is an
+    // environmental block, NOT a verdict on the BJSN shape being tested --
+    // report it as inconclusive so nobody later reads it as evidence.
+    const backgrounded = m.visibility !== 'visible' ||
+        /background media|save power/i.test(m.playError || '');
+    if (backgrounded) {
+      return {
+        pass: false,
+        inconclusive: true,
+        reasons: [`environment: tab was "${m.visibility}" and Chrome ` +
+            'suspended playback. Bring the browser window to the FRONT ' +
+            '(visible, not just focused) and reload.'],
+      };
+    }
+
+    const reasons = [];
+    if (m.mediaError) reasons.push(`media error ${m.mediaError}`);
+    if (m.playError) reasons.push(`play() rejected: ${m.playError}`);
+    if (!m.videoWidth) reasons.push('videoWidth is 0 (no video decode)');
+    if (m.advanced < 0.2) {
+      reasons.push(`play head advanced only ${m.advanced.toFixed(3)}s`);
+    }
+    if (!m.videoDecodedBytes) reasons.push('0 video bytes decoded');
+    if (!m.audioDecodedBytes) reasons.push('0 AUDIO bytes decoded');
+    return {pass: reasons.length === 0, reasons};
+  }
+
+  function label(v) {
+    if (v.pass) return 'PASS';
+    return v.inconclusive ? 'INCONCLUSIVE' : 'FAIL';
+  }
+
+  function render(card, mime, m, verdict, extra, support) {
+    const lines = [
+      `mime          ${mime}`,
+      // Mode B has two mimes, so the caller supplies the support line rather
+      // than us calling isTypeSupported on a concatenated label.
+      `isTypeSupported ${support === undefined ?
+          MediaSource.isTypeSupported(mime) : support}`,
+      ...(extra || []),
+      `visibility    ${m.visibility}`,
+      `readyState    ${m.readyState}`,
+      `dimensions    ${m.videoWidth}x${m.videoHeight}`,
+      `buffered      ${m.buffered}`,
+      `currentTime   ${m.startTime.toFixed(3)} → ${m.currentTime.toFixed(3)} ` +
+          `(+${m.advanced.toFixed(3)}s)`,
+      `video decoded ${m.videoDecodedBytes} bytes`,
+      `audio decoded ${m.audioDecodedBytes} bytes`,
+      `media error   ${m.mediaError || 'none'}`,
+      `play() error  ${m.playError || 'none'}`,
+      '',
+      verdict.pass ? 'PASS' : label(verdict) + ' — ' +
+          verdict.reasons.join('; '),
+    ];
+    card.report.textContent = lines.join('\n');
+    card.report.className = verdict.pass ? 'pass' : 'fail';
+    log(label(verdict), lines.join(' | '));
+  }
+
+  /** Mode A: one SourceBuffer declaring both codecs. */
+  async function runModeA(id, title, stripped, codecs, splitInit) {
+    const card = makeCard(id, title);
+    const mime = `video/mp4; codecs="${codecs.video}, ${codecs.audio}"`;
+    log(id, 'mime', mime, 'isTypeSupported',
+        MediaSource.isTypeSupported(mime));
+    if (!MediaSource.isTypeSupported(mime)) {
+      card.report.className = 'fail';
+      card.report.textContent =
+          `mime ${mime}\nisTypeSupported false\n\nFAIL — codec string rejected`;
+      return {pass: false, reasons: ['isTypeSupported false'], mime};
+    }
+
+    log(id, 'opening MediaSource');
+    const ms = await openMediaSource(card.video);
+    log(id, 'sourceopen ok; addSourceBuffer');
+    const sb = ms.addSourceBuffer(mime);
+    sb.mode = 'segments';
+
+    const extra = [];
+    if (splitInit) {
+      const boxes = U.parseTopLevelBoxes(stripped);
+      const init = concatBoxes(
+          boxes.filter((b) => b.type === 'ftyp' || b.type === 'moov'));
+      const media = concatBoxes(
+          boxes.filter((b) => b.type === 'moof' || b.type === 'mdat' ||
+                              b.type === 'styp'));
+      extra.push(`appends       init ${init.length}B, then media ${media.length}B`);
+      log(id, `appending init ${init.length}B`);
+      await appendAndWait(sb, init, ms, card.video, 'init');
+      log(id, `init appended, buffered=${ranges(sb.buffered)}; ` +
+          `appending media ${media.length}B`);
+      await appendAndWait(sb, media, ms, card.video, 'media');
+    } else {
+      extra.push(`appends       single, whole file ${stripped.length}B`);
+      log(id, `appending whole file ${stripped.length}B`);
+      await appendAndWait(sb, stripped, ms, card.video, 'whole');
+    }
+    log(id, `appends done, buffered=${ranges(sb.buffered)}`);
+
+    ms.endOfStream();
+    if (card.video.buffered.length) {
+      card.video.currentTime = card.video.buffered.start(0);
+    }
+    const m = await measure(card.video);
+    const verdict = judge(m);
+    render(card, mime, m, verdict, extra);
+    return {...verdict, mime};
+  }
+
+  /** Mode B: demux into two SourceBuffers (reference player's shape). */
+  async function runModeB(id, title, raw, codecs) {
+    const card = makeCard(id, title);
+    const vMime = `video/mp4; codecs="${codecs.video}"`;
+    const aMime = `audio/mp4; codecs="${codecs.audio}"`;
+
+    const processed = P.processFile(raw);
+    const vTrack = processed.tracks.find((t) => t.handlerType === 'vide');
+    const aTrack = processed.tracks.find((t) => t.handlerType === 'soun');
+
+    log(id, `tracks video=${vTrack.id} audio=${aTrack.id}; opening MediaSource`);
+    const ms = await openMediaSource(card.video);
+    const vSb = ms.addSourceBuffer(vMime);
+    const aSb = ms.addSourceBuffer(aMime);
+    vSb.mode = 'segments';
+    aSb.mode = 'segments';
+
+    log(id, 'appending per-track init segments');
+    await appendAndWait(vSb, processed.initSegments[vTrack.id], ms,
+        card.video, 'video init');
+    await appendAndWait(aSb, processed.initSegments[aTrack.id], ms,
+        card.video, 'audio init');
+    log(id, `init done; appending ` +
+        `${processed.mediaSegments[vTrack.id].length} video + ` +
+        `${processed.mediaSegments[aTrack.id].length} audio segments`);
+    for (const seg of processed.mediaSegments[vTrack.id]) {
+      await appendAndWait(vSb, seg, ms, card.video, 'video media');
+    }
+    for (const seg of processed.mediaSegments[aTrack.id]) {
+      await appendAndWait(aSb, seg, ms, card.video, 'audio media');
+    }
+    log(id, `appends done, video=${ranges(vSb.buffered)} ` +
+        `audio=${ranges(aSb.buffered)}`);
+
+    ms.endOfStream();
+    if (card.video.buffered.length) {
+      card.video.currentTime = card.video.buffered.start(0);
+    }
+    const m = await measure(card.video);
+    const verdict = judge(m);
+    render(card, `${vMime}  +  ${aMime}`, m, verdict, [
+      `tracks        video id=${vTrack.id} ts=${vTrack.timescale}, ` +
+          `audio id=${aTrack.id} ts=${aTrack.timescale}`,
+      `segments      video ${processed.mediaSegments[vTrack.id].length}, ` +
+          `audio ${processed.mediaSegments[aTrack.id].length}`,
+      `video buffered ${ranges(vSb.buffered)}`,
+      `audio buffered ${ranges(aSb.buffered)}`,
+    ], `video=${MediaSource.isTypeSupported(vMime)} ` +
+       `audio=${MediaSource.isTypeSupported(aMime)}`);
+    return {...verdict, mime: `${vMime} + ${aMime}`};
+  }
+
+  (async () => {
+    const results = {};
+    try {
+      const raw = new Uint8Array(
+          await (await fetch(FIXTURE)).arrayBuffer());
+      log('fixture', FIXTURE, raw.length, 'bytes');
+
+      const stripped = P.stripBjsnBox(raw);
+      log('stripped', stripped.length, 'bytes',
+          `(removed ${raw.length - stripped.length})`);
+      log('boxes', U.parseTopLevelBoxes(stripped)
+          .map((b) => `${b.type}:${b.size}`).join(' '));
+
+      const codecs = BjsnUtils.BjsnCodecDetector.detectCodecsFromSegment(raw);
+      log('codecs', JSON.stringify(codecs));
+
+      // Each mode is isolated: a stall or throw in one must not prevent the
+      // others from reporting, or we learn nothing from the run.
+      const modes = [
+        ['A1', () => runModeA('a1',
+            'A1 — one SourceBuffer, both codecs, single append of whole file',
+            stripped, codecs, /* splitInit= */ false)],
+        ['A2', () => runModeA('a2',
+            'A2 — one SourceBuffer, both codecs, init and media appended ' +
+            'separately', stripped, codecs, /* splitInit= */ true)],
+        ['B', () => runModeB('b',
+            'B — two SourceBuffers, demuxed (reference player shape, control)',
+            raw, codecs)],
+      ];
+      for (const [key, run] of modes) {
+        try {
+          results[key] = await run();
+        } catch (e) {
+          log(key, 'THREW', e.message);
+          results[key] = {pass: false, reasons: [e.message]};
+          const pre = document.getElementById(`r-${key.toLowerCase()}`);
+          if (pre) {
+            pre.className = 'fail';
+            pre.textContent = `FAIL — ${e.message}`;
+          }
+        }
+      }
+    } catch (e) {
+      log('SPIKE ERROR', e.message, e.stack);
+      document.getElementById('verdict').innerHTML =
+          `<span class="fail">spike aborted: ${e.message}</span>`;
+      return;
+    }
+
+    const line = (k) => {
+      const r = results[k];
+      if (!r) return `${k}: did not run`;
+      return `${k}: ${label(r)}` +
+          (r.pass ? '' : ' — ' + r.reasons.join('; '));
+    };
+    let recommendation;
+    if (Object.values(results).some((r) => r && r.inconclusive)) {
+      recommendation = 'INCONCLUSIVE — Chrome suspended playback because the ' +
+          'tab was not visible. Nothing here is evidence either way. Bring ' +
+          'the window to the front and reload.';
+    } else if (!results.B || !results.B.pass) {
+      recommendation = 'CONTROL FAILED — mode B is the shape the reference ' +
+          'player uses and it did not pass here, so this harness (or the ' +
+          'fixture) is at fault. Do not conclude anything about A yet.';
+    } else if (results.A1.pass && results.A2.pass) {
+      recommendation = 'Take Option A. A single SourceBuffer decodes both ' +
+          'tracks from the interleaved file, in both the single-append and ' +
+          'split-init shapes.';
+    } else if (results.A2.pass) {
+      recommendation = 'Take Option A, appending init separately (A2). The ' +
+          'single-append shape (A1) failed, which is fine — Shaka appends ' +
+          'init separately anyway.';
+    } else {
+      recommendation = 'Take Option B (demux via transmuxer plugin). A ' +
+          'single muxed SourceBuffer did not decode both tracks.';
+    }
+    const text = [line('A1'), line('A2'), line('B'), '', recommendation];
+    document.getElementById('verdict').textContent = text.join('\n');
+    log('VERDICT', text.join(' || '));
+  })();
+  </script>
+</body>
+</html>
