@@ -30,8 +30,9 @@ node tools/bjsn-make-test-asset.js --verify testdata/bjsn/generated
 
 Output mirrors the real capture's structure: one `traf` per `moof`, video and
 audio moofs interleaved roughly 1:3, `tfdt` starting at a large non-zero media
-time and continuing seamlessly across segment files, an initial segment carrying
-`ftyp`+`moov`+`bjsn` and subsequent segments carrying neither `ftyp` nor `moov`.
+time and continuing seamlessly across segment files, and a `bjsn` box in every
+segment. Only the first segment carries `ftyp`+`moov` — but see the divergences
+below, because the customer spec suggests every segment should.
 
 The video has a burned-in timecode and frame counter, and the audio beeps at each
 whole second, so A/V sync can be judged by eye and ear.
@@ -48,8 +49,12 @@ libfreetype. Homebrew's default `ffmpeg` may lack it; the script auto-detects a
 - A/V start skew is ~0; the real capture has ~10 ms. So it does not exercise the
   "t0 = minimum across tracks" path.
 - One synthetic gear, versus nine in the real capture.
-- Subsequent segments contain a `bjsn` box. That is an **assumption** — only an
-  initial segment has ever been captured.
+- Subsequent segments contain a `bjsn` box. **Confirmed** by the customer spec
+  (V2.0, 16 May): every segment carries the metadata.
+- Subsequent segments contain **no** `ftyp`/`moov`. This is an assumption and
+  the customer spec suggests it is **wrong** — it says initial and subsequent
+  segments are "identical in content". A `--init-every-segment` flag and a
+  fixture regeneration are likely needed; see plan §2b.
 
 ---
 
@@ -59,7 +64,10 @@ A command-line utility for removing BJSN (Bytedance JSON) boxes from MP4 files. 
 
 ## Overview
 
-The BJSN Box Stripper CLI tool provides a standalone way to process MP4 files and remove BJSN boxes, which are custom metadata boxes used in TikTok's streaming architecture. The tool can also remove other box types like MOOV and FTYP boxes if needed.
+The BJSN Box Stripper CLI tool provides a standalone way to inspect BJSN CMAF
+segments and to remove their `bjsn` box — the custom metadata box TikTok embeds
+in every segment. It reads both initial and subsequent segments (see "Segment
+kinds" below).
 
 ## Installation
 
@@ -80,22 +88,30 @@ node tools/bjsn-stripper-cli.js input.mp4
 ### Advanced Usage
 
 ```bash
-# Show BJSN box information without stripping
+# Show BJSN box info and file structure, without writing anything
 node tools/bjsn-stripper-cli.js --info input.mp4
 
-# Strip BJSN, MOOV, and FTYP boxes
-node tools/bjsn-stripper-cli.js --all input.mp4 output.mp4
+# Split an initial segment into per-track init and media segments
+node tools/bjsn-stripper-cli.js --split input.mp4 output-prefix
 
-# Verbose output
+# Also detect and print codec strings
+node tools/bjsn-stripper-cli.js --info --codec input.mp4
+
+# Verbose output (includes stack traces on error)
 node tools/bjsn-stripper-cli.js --verbose input.mp4 output.mp4
 ```
 
 ### Command Line Options
 
+Authoritative list — run `--help` to confirm:
+
 - `-h, --help`: Show help message
-- `-i, --info`: Show BJSN box information without stripping
-- `-a, --all`: Strip BJSN, MOOV, and FTYP boxes
-- `-v, --verbose`: Enable verbose output
+- `-i, --info`: Show BJSN box info and file structure, without stripping
+- `-s, --split`: Split into separate init and media segments (initial segment only)
+- `-c, --codec`: Detect and display codec information
+- `-v, --verbose`: Verbose output
+
+Exit status is `0` on success and `1` on any error.
 
 ## BJSN Box Format
 
@@ -122,62 +138,65 @@ BJSN boxes contain JSON metadata with the following structure:
 
 ## Examples
 
-### Example 1: Basic Box Stripping
+### Example 1: Inspecting a real capture
 
-```bash
-$ node tools/bjsn-stripper-cli.js sample.mp4 clean.mp4
-🔧 BJSN STRIPPER: Starting to strip BJSN box
-  📏 Input segment size: 1234567 bytes
-  🔍 BJSN box found at offset: 123 size: 456
-  ✅ BJSN box stripped successfully
-  📏 Output segment size: 1234111 bytes
-  📊 Size reduction: 456 bytes
+Actual output, not illustrative:
 
-✅ Success!
-  📄 Output file: clean.mp4
-  📏 Original size: 1234567 bytes
-  📏 Stripped size: 1234111 bytes
-  📊 Size reduction: 456 bytes
 ```
+$ node tools/bjsn-stripper-cli.js --info test/test/assets/bjsn-initial-segment.mp4
+📁 Processing file: test/test/assets/bjsn-initial-segment.mp4
 
-### Example 2: Inspecting BJSN Box Content
+📊 File Information:
+  Size: 76774 bytes
 
-```bash
-$ node tools/bjsn-stripper-cli.js --info sample.mp4
-📁 Processing file: sample.mp4
-
-📊 BJSN Box Information:
-  Position: 123
-  Size: 456 bytes
-  Payload Size: 448 bytes
-  JSON Data: {
-    "type": "dynamic",
-    "gear_num": 3,
-    "seq_num": 10,
-    "template_path": "123-media-first-${num}.mp4",
-    "gear_list": [
-      {
-        "uhd5": {
-          "realtime_bitrate": 1000000
-        }
+📊 BJSN Box:
+  Offset: 1104
+  Size: 433 bytes
+  Data: {
+  "type": "dynamic",
+  "gear_num": 9,
+  "seq_num": 11905,
+  "template_path": "media_${num}.mp4",
+  "gear_list": [
+    {
+      "hd": {
+        "realtime_bitrate": 2000000
       }
-    ]
-  }
+    ... (9 gears total)
+  ]
+}
+
+📊 Segment kind: initial (has ftyp + moov)
+  Fragments: 116 moof / 116 mdat
+  Track 1: video (vide) — 30 fragments
+  Track 2: audio (soun) — 86 fragments
 ```
 
-### Example 3: No BJSN Box Found
+### Example 2: A subsequent segment
 
-```bash
-$ node tools/bjsn-stripper-cli.js regular.mp4 output.mp4
-🔧 BJSN STRIPPER: Starting to strip BJSN box
-  📏 Input segment size: 1234567 bytes
-  ✅ No BJSN box found, returning original data
+Handler types live in the `moov`, so a segment without one reports its tracks by
+the IDs found in the fragment headers:
 
-✅ Success!
-  📄 Output file: output.mp4
-  📏 Original size: 1234567 bytes
-  📏 Stripped size: 1234567 bytes
-  📊 Size reduction: 0 bytes
+```
+$ node tools/bjsn-stripper-cli.js --info test/test/assets/bjsn/media_11909.mp4
+📊 Segment kind: subsequent (no ftyp/moov — init lives in the initial segment)
+  Fragments: 116 moof / 116 mdat
+
+📊 Tracks:
+  Track 1: track1 (unknown (no moov in this segment)) — 30 fragments
+  Track 2: track2 (unknown (no moov in this segment)) — 86 fragments
+```
+
+### Example 3: Stripping
+
+```
+$ node tools/bjsn-stripper-cli.js input.mp4 out
+🔧 Processing MP4 file...
+  ✅ BJSN box removed
+  📊 Size reduction: 433 bytes
+  📊 Found 2 tracks
+
+✅ Created out_stripped.mp4 (76341 bytes)
 ```
 
 ## Technical Details
@@ -205,7 +224,12 @@ When removing a box:
 
 ## Integration with Shaka Player
 
-This CLI tool complements the existing `shaka.util.BjsnBoxStripper` class in the Shaka Player library. While the library version is optimized for browser environments and streaming use cases, this CLI version is designed for:
+**Note:** earlier revisions of this file described this tool as complementing a
+`shaka.util.BjsnBoxStripper` class in the library. That class was part of the v1
+attempt and **does not exist on this branch** — see
+`docs/design/bjsn-integration-plan-v2.md` §5. There is currently no BJSN code
+under `lib/` at all; Phase 2 introduces it. This CLI stands alone, and is useful
+for:
 
 - Preprocessing files before distribution
 - Debugging and analysis of BJSN box content

@@ -19,16 +19,27 @@
 > - **One `moof` per track.** Not stated here. Each `moof` holds exactly one
 >   `traf`, and video/audio moofs interleave ~1:3 within a single file.
 >
-> Unverified — plausible but never observed, since only ONE real initial segment
-> has been captured and we have no URL provenance for it:
+> **Since confirmed by the customer spec** (V2.0, 16 May — see plan §2b), so the
+> items below are no longer guesses: `${num}` templating, `abr_pts` as a real
+> client→CDN startup-latency parameter, gear switching as a path-suffix swap, and
+> that **every** segment carries a `bjsn` box.
 >
-> - the `abr_pts` query parameter and its "initial request only" rule
-> - gear-name substitution "after the last dash" in the base URL
-> - `${num}` = `current_seq_num + 1` (consistent with the format, and what
->   `tools/bjsn-make-test-asset.js` assumes, but not confirmed against traffic)
-> - whether subsequent segments carry a `bjsn` box at all
+> Still unverified against real bytes, because only ONE real initial segment has
+> ever been captured and we have no URL provenance for it:
 >
-> Treat every "Gear Management" and ABR section as design intent for a later
+> - the precise `abr_pts` "initial request only" rule (the spec describes the
+>   mechanism, not the client's exact request pattern)
+> - the exact base-URL rewrite for a gear switch
+> - **whether subsequent segments also carry `ftyp` + `moov`.** The spec implies
+>   they do; our fixtures assume they do not. Plan §2b explains why this is the
+>   single most consequential open question, and how to settle it cheaply.
+>
+> The spec also adds requirements absent from this document entirely: per-gear
+> `drm` in `gear_list`, the `Last-Segment-Duration` response header, `Range:
+> bytes=0-0` prefetch pre-warm, and the `Old-Gear-Path` / `Abr-Downgrade` fallback
+> handshake. See plan §2b — it is the current summary, not this file.
+>
+> Treat every "Gear Management" and ABR section below as design intent for a later
 > phase, not as settled fact.
 
 ## Overview

@@ -58,6 +58,9 @@ directory because `template_path` resolution requires the segments to be
 siblings.
 
 `media_11905.mp4` is the initial segment; the other four carry no `ftyp`/`moov`.
+⚠️ **That may be wrong** — the customer spec implies every segment carries init.
+See `docs/design/bjsn-integration-plan-v2.md` §2b; these four files may need
+regenerating once one real subsequent segment has been captured.
 `tfdt` continues seamlessly across all five — each file's video ends 67 ticks
 (one cadence step) before the next begins, and audio exactly one 1024-sample AAC
 frame:
