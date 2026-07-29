@@ -35,17 +35,186 @@ this restart (see §1 and §3); check it before and after any change:
 git diff origin/main --stat -- lib/   # must print nothing
 ```
 
-Toolchain — **verified on this machine, 2026-07-29.** Do not reach for the usual
-npm scripts: there is no `npm test` and no `npm run lint`, and `npm run build`
-**fails here** because it shells out to `python`, which is not on PATH (only
-`python3` is). Call the Python entry points directly:
+Toolchain. Do not reach for the usual npm scripts: there is no `npm test` and no
+`npm run lint`, and `npm run build` **fails here** because it shells out to
+`python`, which is not on PATH (only `python3` is). Call the Python entry points
+directly:
 
 ```bash
-python3 build/all.py                   # build  (NOT `npm run build` — see above)
+python3 build/gendeps.py               # dist/deps.js, for uncompiled mode
+python3 build/check.py                 # Closure completeness + type check + lint + cspell
+python3 build/all.py                   # full build (needs Java, see below)
 python3 build/test.py --filter bjsn    # karma tests; --help for options
-python3 build/check.py                 # Closure completeness + type check + lint
 npx eslint demo/ lib/ test/            # linter alone
 python3 -m http.server 8080            # serve repo root for demo/bjsn/ pages
+```
+
+### Java is required, and is now installed (2026-07-29)
+
+The Closure compiler is invoked as `java -jar compiler.jar`
+(`build/compiler.py:163`), so anything that compiles — `build/all.py`,
+`build/check.py`, `build/test.py` without `--no-build` — needs a JDK. There was
+none on this machine; an earlier revision of this section wrongly claimed
+`build/all.py` was verified. Installed with:
+
+```bash
+brew install openjdk@21     # keg-only, so no sudo needed
+export PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH"
+```
+
+`openjdk@21` is keg-only, so **`java` is only on PATH if you put it there.**
+Either add that `export` to your shell profile, or symlink the JDK where the
+system wrappers look (this one does need sudo):
+
+```bash
+sudo ln -sfn /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk \
+  /Library/Java/JavaVirtualMachines/openjdk-21.jdk
+```
+
+Closure 20240317 wants Java 11+; 21 is the current LTS.
+
+**`python3 build/all.py` is now green** (exit 0) — all twelve compile steps: the
+four library variants (`ui`, `compiled`, `dash`, `hls`) in both debug and release,
+plus the demo app and the cast receiver in both. `build/check.py` passes
+end-to-end too, including its Closure type-check pass over the tests. Getting
+there took three separate fixes, below.
+
+### The build was already red before this branch touched it
+
+Once Java made `build/check.py` runnable, it failed — on files committed *earlier*
+in this branch, not on the new ones: `demo/bjsn/bjsn_mse.js`,
+`demo/bjsn/bjsn_utils.js` and `eslint.config.mjs` all tripped the `cspell` step,
+which nobody could have seen while the build died at the Java step first. §5
+listed `project-words.txt` under "drop, do not port", which is how the BJSN
+vocabulary went missing.
+
+Fixed by adding the vocabulary back (`bjsn`, `styp`, `demux`, `moofs`,
+`Bytedance`, `TikTok`, `ffprobe`, `QUIC`/`CCTK`, …) to `project-words.txt`.
+`cspell` matches case-insensitively, so one lowercase entry covers
+`bjsn`/`Bjsn`/`BJSN`. Note it checks three separate file sets — `js`, then
+`docs/**/*.md`, then `build/**/*.py` — and stops at the first failure, so a green
+js pass does not mean the md pass will pass.
+
+Writing docs *about* this work then trips it again, since words like `libexec`
+and `ETIMEDOUT` are themselves unknown. Do not discover that one word per full
+build — check the files you touched directly, which takes seconds:
+
+```bash
+./node_modules/.bin/cspell --config=cspell.config.yaml --no-progress \
+  docs/design/bjsn-integration-plan-v2.md demo/bjsn/README.md
+```
+
+(`npx cspell` does **not** work — npm resolves it as a package script and fails
+with `Missing script: "cspell"`. Call the binary in `node_modules/.bin`.)
+
+**And the demo app build was broken too.** Past `check.py`, all four library
+variants compiled — then `Compiling the demo app` failed. `build/apps.py` globs
+**everything** under `demo/` into one Closure compilation, so it pulled in
+`demo/bjsn/bjsn_utils.js`, whose `static Foo = class {…}` public class fields
+Closure rejects at this language level (`JSC_LANGUAGE_FEATURE`, 7 errors).
+
+Phase 0 moved those files into `demo/` and excluded them from **eslint**
+(`eslint.config.mjs`) but not from the demo app compile — the two exclusions are
+unrelated, and the compile one was invisible without Java.
+
+Fixed in `build/apps.py` by subtracting `demo/bjsn/` from the demo app's file
+set, exactly as `demo/cast_receiver/` already is. That is correct rather than
+merely expedient: the BJSN pages load their own scripts directly and never go
+through the demo bundle. **Note this is a diff to a shared build file** — the
+first on this branch — but it is not `lib/`, so the §3 invariant still holds. The
+alternative was rewriting proven reference code to satisfy a compiler that never
+needed to see it.
+
+**And the test runner needed a third fix, unrelated to Java.**
+`build/test.py` died with `Cannot find plugin "karma-local-wd-launcher"` even
+though the package is installed. The real error is one level down: `wd` requires
+`../build/safe-execute`, and `node_modules/wd/build/` did not exist.
+
+Cause: this machine's `~/.npmrc` sets **`ignore-scripts=true`** (a deliberate
+security posture — it stops packages executing arbitrary code at install time),
+so `wd`'s `install` script, which generates that `build/` directory from
+`browser-scripts/`, never ran.
+
+Fixed surgically, without weakening the setting, by running that one script —
+whose whole job is to read three local files and write three:
+
+```bash
+node node_modules/wd/scripts/build-browser-scripts.js
+```
+
+#### The `wd` note, in full — read this before debugging karma
+
+**This fix lives in `node_modules/`, so it is in no commit and cannot be.** Any
+`npm install`, `npm ci` or dependency bump silently reverts it, and the symptom
+that comes back names the wrong package (`karma-local-wd-launcher`) rather than
+the one at fault (`wd`). Expect to hit it more than once.
+
+How to recognise it in one command — if this prints `MODULE_NOT_FOUND` for
+`../build/safe-execute`, it is this and nothing else:
+
+```bash
+node -e "require('./node_modules/karma-local-wd-launcher')"
+```
+
+Then re-run the fix above. Confirm with:
+
+```bash
+test -f node_modules/wd/build/safe-execute.js && echo present || echo MISSING
+```
+
+Two durable alternatives, both deliberate choices rather than drive-bys:
+
+- **A project-local `.npmrc` with `ignore-scripts=false`** — the remedy this
+  machine's own `~/.npmrc` comment suggests. It re-enables install scripts for
+  *every* dependency, not just `wd`, and being committed it makes that choice for
+  everyone who clones the repo. That is a security decision; make it consciously.
+- **A `postinstall` script in `package.json`** running the `wd` build. Narrower
+  in what it executes, but it is itself an install script, so it does nothing
+  while `ignore-scripts=true` is set — self-defeating here.
+
+Neither is applied. The manual command is the honest minimum: it changes nothing
+shared, and this note is why the next person will not have to re-derive it.
+
+**`build/test.py` is still blocked, one step further on: no ChromeDriver.** Karma
+now loads its plugins and gets as far as launching a browser, then fails with
+`Could not connect to Chrome WebDriver / ECONNREFUSED 127.0.0.1:4286`. Shaka
+drives browsers exclusively over WebDriver (there is no plain
+`karma-chrome-launcher` in `package.json` — only the `webdriver` and `local-wd`
+launchers), so a `chromedriver` matching the installed Chrome is required and
+none is present. `webdriver-installer` is supposed to fetch it, and did not —
+plausibly the same `ignore-scripts` story. **This is the remaining gap before
+Phase 2's test gate can run**, and it is independent of Java.
+
+**Three lessons for Phase 2:** run `python3 build/check.py` before committing,
+not after; remember that anything dropped into `demo/` is compiled by
+`build/apps.py` whether you intended it or not; and when a karma plugin "cannot
+be found" though it is plainly installed, `require()` it directly to get the real
+error.
+
+### `build/all.py` needs network, and will fail spuriously without it
+
+`build/all.py` compiles `ui/controls.less`, which does
+`@import (css, inline) "https://fonts.googleapis.com/icon?family=..."` at build
+time (`ui/controls.less:18`). That step runs *before* the library compile, so a
+network hiccup stops the whole build with `CSS compilation failed` and an
+`AggregateError` — before a single line is compiled, and with no hint that the
+cause was the network. Nothing to do with Java or with BJSN.
+
+Measured here: that one request fails roughly **1 time in 6** with `ETIMEDOUT`
+(often after only ~250 ms, so it is a flaky path rather than a real timeout).
+`build/all.py` compiles LESS twice — `ui/controls` and `demo/demo` — so a given
+build has a **~30% chance** of dying on it. That matched observation: 4 of 7
+runs. It always succeeded unchanged on retry.
+
+So: **retry before investigating**, and do not read a `CSS compilation failed`
+as evidence that your change broke something — it fails *before* anything is
+compiled. If it persists across several retries, test Node's connectivity
+specifically; `curl` succeeding proves nothing, since the two use different
+resolvers, CA stores and proxy conventions:
+
+```bash
+node -e "fetch('https://fonts.googleapis.com/icon?family=Material+Icons+Round').\
+then(r=>console.log(r.status)).catch(e=>console.log('FAIL',e.cause&&e.cause.code))"
 ```
 
 If you would rather type `npm run build`, fix `package.json` to say `python3` —
@@ -71,12 +240,19 @@ Done:
 - **Segment layout settled.** §2, §2b. **Every** segment carries
   `ftyp`+`moov`+`bjsn`+`styp` and begins with an IDR, so any segment starts
   playback cold. Fixtures regenerated to match and verified to decode standalone.
+- **Shaka playback proven end-to-end, still zero `lib/` diff** (2026-07-29).
+  §3.6. `demo/bjsn/bjsn_shaka_player.html` plays the fixtures through
+  `shaka.Player` using a demo-level manifest parser plugin, with the same startup
+  metrics as the standalone player. This is a working prototype of Phase 3 and it
+  settles decision 2 in §8 in the affirmative: zero-core-diff is achievable.
 
 What exists to build on:
 
 | Thing | Where |
 | --- | --- |
 | Working standalone MSE player (the behavioural contract, §2) | `demo/bjsn/bjsn_player.html` + `bjsn_utils.js` + `bjsn_mse.js` |
+| Working **Shaka** player for BJSN, prototype of Phase 3 (§3.6) | `demo/bjsn/bjsn_shaka_player.html` + `bjsn_shaka_parser.js` |
+| Player-agnostic MSE startup instrumentation, measures both players identically | `demo/bjsn/bjsn_timing_probe.js` |
 | Architecture spike harness, takes any segment by `?url=` | `demo/bjsn/spike-muxed-buffer.html` |
 | Real captured initial segment (77 KB) | `test/test/assets/bjsn-initial-segment.mp4` |
 | Synthetic 5-segment set: every segment self-initialising and cold-startable, seamless `tfdt` across files | `test/test/assets/bjsn/media_11905..11909.mp4` |
@@ -88,9 +264,17 @@ What exists to build on:
 with unit tests, then repoint `demo/bjsn/` at them so the reference player and the
 library cannot drift.
 
-⚠️ **Two decisions in §8 are still unanswered and gate Phase 2** — most
-importantly whether ABR must land this round, since Option A cannot do per-track
-ABR and §3.1 would have to be reopened. Resolve both before writing `lib/` code.
+⚠️ **One decision in §8 still gates Phase 2:** whether ABR must land this round.
+Option A cannot do per-track ABR, so if it must, §3.1 reopens and the demux route
+is needed instead. Resolve it before writing `lib/` code. (Decision 2,
+zero-core-diff, is settled — see §3.6.)
+
+✅ **The toolchain is now working.** A JDK is installed and
+`python3 build/all.py` is green. Getting there fixed three things that were
+already broken on this branch and invisible without Java: missing `cspell`
+vocabulary, and the BJSN demo files breaking the demo app compile. See the
+toolchain section below — including the ~30%-per-run flaky CSS step, which is
+not your change failing.
 
 ## 1. Why v1 did not work
 
@@ -449,6 +633,75 @@ never plays", the failure mode v1 hit.
   `SegmentDownloadManager`. Only port the custom backoff if Shaka's retry proves
   insufficient.
 
+### 3.6 Prototype result (2026-07-29): Option A works in Shaka, no core diff
+
+`demo/bjsn/bjsn_shaka_player.html` + `bjsn_shaka_parser.js` play the synthetic
+fixture set through `shaka.Player` with **zero diff to `lib/`**, using exactly
+the three extension points in §3 and nothing else. Details and reproduction in
+`demo/bjsn/README.md`. What it establishes:
+
+**`isAudioMuxedInVideo` is the wrong flag — do not use it.** §3.1 flagged it as
+the risk in Option A ("HLS-shaped, v1 already hit one bug there") and budgeted for
+core fixes. That budget is not needed, because the flag should not be set at all:
+`media_source_engine.js:551` turns it into `needSplitMuxedContent_ = true`, which
+makes Shaka **demux into two SourceBuffers** — Option B's shape, not Option A's.
+
+What actually carries Option A is `stream_utils.js` `getDecodingConfigs_()`
+(~lines 806–831): when a video stream's codec list contains a comma **and there
+is no separate audio stream**, it already splits the list and builds both an
+`AudioConfiguration` and a `VideoConfiguration` for MediaCapabilities. So the
+correct shape is a **video-only variant** — one `Stream`, `type: 'video'`,
+`codecs: 'avc1.…,mp4a.…'`, `variant.audio = null`, `isAudioMuxedInVideo: false`.
+A muxed video-only variant is a first-class shape in Shaka. **The one core diff
+§3.1 and §7 expected to need is not needed**, and the `isAudioMuxedInVideo` risk
+in §7 can be struck.
+
+**Confirmed by the running prototype:** exactly one SourceBuffer
+(`video/mp4; codecs="avc1.42E01E,mp4a.40.2"`), init append classified
+`ftyp+moov`, media appends `styp+moof+mdat…` (so `styp` survives, per §3.1),
+both tracks decoding, 270x480, playback from `t0` = 2333.176 s through all five
+fixtures.
+
+**Timeline mapping (§3.4) works as designed, and live needs less than expected.**
+`timestampOffset` stays 0, references carry real media times, and
+`setUserSeekStart(t0)` floors the seek range. For live, `notifySegments()` does
+the rest by itself: with a non-null `presentationStartTime` and
+`autoCorrectDrift`, it recomputes the start time from segment end times on every
+call (`presentation_timeline.js:327–333`), which lands the live edge exactly on
+the end of the last known segment — in BJSN's media-clock coordinates, with no
+arithmetic of our own.
+
+**Two failure modes the prototype hit, both of which Phase 3/5 must handle:**
+
+1. **Shaka starts a live stream at the live edge, so it skipped the first
+   segment.** At manifest time the index holds one reference, so the live edge
+   *is* that segment's end, and playback began at `seq_num + 1` — throwing away
+   the bytes retained for `setSegmentData()` and making startup slower than the
+   standalone player. Fix: set `manifest.startTime = t0`. Cheap, but it silently
+   negates §3.3's "no refetch" benefit if missed, and it looks like a timeline
+   bug rather than a start-position one.
+2. **Publishing references on a timer lets the presentation run away from the
+   content.** Adding one reference per segment duration regardless of what exists
+   means every `notifySegments()` pushes the live edge further out; in the first
+   run the index advertised out to `seq 12006` (media time 2539 s) while the
+   origin was stuck at 11909, so the play head chased an edge with no media
+   behind it and every fetch 404'd. **A real origin that pauses publication
+   produces exactly this.** §3.5's "404 on the next segment is normal, rely on
+   Shaka's retry" is necessary but not sufficient — retry handles the *fetch*,
+   not the runaway *timeline*. The parser now keeps at most one unconfirmed
+   reference outstanding, gated on the `seq_num` read from the in-band `bjsn` box,
+   and anchors each new reference to the real media end time of the segment that
+   arrived rather than accumulating duration estimates (which also removes the
+   drift Phase 4 would otherwise have to chase).
+
+**Caveats.** This is demo-level plain JS, not Closure modules, and it is not a
+substitute for Phase 2/3: no unit tests, no lint coverage, single gear, no DRM,
+and it reuses `ProgressiveMp4Parser`'s per-track init synthesis only to discard
+it. It also runs the library uncompiled, so it needs `python3 build/gendeps.py`
+(`build/all.py` cannot run here — the Closure compiler needs a Java runtime that
+is not installed on this machine, which contradicts §0's earlier claim that
+`build/all.py` was verified; `gendeps.py` is Node-based and does work).
+
 ## 4. Repository strategy
 
 **Recommendation: fresh branch off `main`, not a fresh clone.** A new clone buys
@@ -571,6 +824,11 @@ synthesis (§3.2), so that one function stays demo-only rather than being ported
 **Phase 3 — Manifest parser, first frame** (~3 days)
 `BjsnManifestParser` registered by mime type; treat the stream as static/single
 segment initially. Init and first-file bytes delivered via `setSegmentData()`.
+
+> **A working prototype already exists** at `demo/bjsn/bjsn_shaka_parser.js`
+> (§3.6). Phase 3 is now largely a port of it into `lib/` as Closure modules with
+> tests, rather than a design exercise — but read §3.6's two failure modes first,
+> because both are easy to reintroduce.
 *Exit:* `shaka.Player.load(url, undefined, 'application/bjsn')` renders and
 plays the initial file to its end, with zero diff to pre-existing `lib/` files
 (or exactly one justified, tested diff).
@@ -586,9 +844,14 @@ Shaka retry. *Exit:* 30-minute unattended live playback with no stall and no
 A/V drift; buffer health comparable to the standalone player.
 
 **Phase 6 — Parity and hardening** (~2 days)
-Port the standalone player's timing metrics into a comparison harness: time to
-first byte / `bjsn` parsed / init appended / first media append / `playing`, for
-Shaka vs standalone on the same asset. Then enable `lowLatencyMode` so
+The measurement half of this is **already built**: `demo/bjsn/bjsn_timing_probe.js`
+records time to first byte / `bjsn` parsed / init appended / first media append /
+`playing` by hooking the MSE entry points, so it measures either player on
+identical axes (§3.6). What remains is to run it against the standalone player
+too and put the two columns side by side. Note that Option A's single
+SourceBuffer collapses the separate video/audio init-append numbers into one, and
+that Chrome pauses muted media in a hidden tab — read startup timings with the
+window in front or they are meaningless. Then enable `lowLatencyMode` so
 `streaming_engine`'s existing chunked-append path (`streaming_engine.js:1912`)
 gives Shaka the same progressive behaviour the standalone player gets for free.
 *Exit:* Shaka's time-to-playing within ~15% of the standalone player, and the
@@ -604,8 +867,10 @@ deliberate one-way-ish door for multi-gear.
 
 - **A/V sync in Option A.** A single SourceBuffer fed interleaved `moof`s per
   track is legal MSE but less travelled. Mitigated by the Phase 1 spike.
-- **`isAudioMuxedInVideo` is HLS-shaped.** v1 already found one bug there. If
-  Option A wins, budget for one or two small isolated core fixes with tests.
+- ~~**`isAudioMuxedInVideo` is HLS-shaped.**~~ **Retired (2026-07-29, §3.6.)**
+  The flag should never be set for BJSN — it triggers Shaka's *demux* path. Option
+  A rides on `stream_utils.js`'s existing multiplexed-codec handling for a
+  video-only variant instead, and the prototype needed no core fix at all.
 - **Timeline mapping (§3.4).** The genuinely novel work, and the likeliest
   source of "decodes but won't play". Phase 4 exists to isolate it rather than
   discover it during live testing.
@@ -631,11 +896,13 @@ Still open — both should be settled before any `lib/` code is written:
    gear. Option A cannot do per-track ABR, so if ABR is in scope for *this* round,
    §3.1 must be reopened and the Option B / demux route taken instead. Answering
    this late is expensive; answering it now is free.
-2. **Upstream intent:** is zero-core-diff a hard requirement (eventual upstream
-   PR / easy rebase onto `main`), or is a maintained fork acceptable? v2 assumes
-   the former; relaxing it makes Phase 3–5 noticeably cheaper.
-
 Settled:
+
+2. ~~**Upstream intent:** is zero-core-diff a hard requirement?~~ **Moot for
+   Phases 3–5 (2026-07-29).** The question mattered because a hard requirement
+   was assumed to cost extra work. §3.6 shows it costs nothing: a working Shaka
+   BJSN player exists with zero `lib/` diff, so keep the constraint. It may
+   reopen at Phase 7 (ABR), where Option A has to be revisited anyway.
 
 3. ~~**Does the standalone player stay?**~~ **Yes.** It lives at `demo/bjsn/` and
    §2 treats its behaviour as the contract the integration must match. Phase 2

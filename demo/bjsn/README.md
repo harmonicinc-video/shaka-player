@@ -1,38 +1,172 @@
-# BJSN reference player
+# BJSN players
 
-A standalone MSE player for TikTok's BJSN (Bytedance JSON) CMAF format, written
-directly against Media Source Extensions and **not** using Shaka Player.
+Two players for TikTok's BJSN (Bytedance JSON) CMAF format, on the same test
+harness and reporting the same startup metrics:
 
-This is the working reference implementation. Its behaviour is the contract that
-the Shaka integration must match — see
+- **`bjsn_player.html`** — standalone, written directly against Media Source
+  Extensions, **no** Shaka Player. The working reference implementation.
+- **`bjsn_shaka_player.html`** — the same format played through `shaka.Player`,
+  via a manifest parser plugin registered from this directory. Zero changes to
+  `lib/`.
+
+The standalone player's behaviour is the contract the Shaka integration must
+match — see
 [`docs/design/bjsn-integration-plan-v2.md`](../../docs/design/bjsn-integration-plan-v2.md),
-§2 ("Ground truth"). When the integration and this player disagree, this player
-is right until proven otherwise.
+§2 ("Ground truth"). When the two disagree, the standalone player is right until
+proven otherwise.
 
 ## Files
 
 | File | Contents |
 | --- | --- |
-| `bjsn_player.html` | UI, controls, log pane, timing-metrics panel |
-| `bjsn_utils.js` | `BjsnParser`, `BjsnCodecDetector`, `Mp4BoxUtils`, `BjsnMp4Processor`, `ProgressiveMp4Parser` |
+| `bjsn_player.html` | Standalone player: UI, controls, log pane, timing-metrics panel |
+| `bjsn_utils.js` | `BjsnParser`, `BjsnCodecDetector`, `Mp4BoxUtils`, `BjsnMp4Processor`, `ProgressiveMp4Parser` — shared by both players |
 | `bjsn_mse.js` | `SegmentDownloadManager`, `SourceBufferStateMachine`, `MediaSourceOrchestrator`, `TimestampManager`, `PlaybackSession` |
+| `bjsn_shaka_player.html` | Shaka player: same panels, plus a timeline/buffer pane and Shaka's own stats |
+| `bjsn_shaka_parser.js` | `BjsnShakaParser` (a `shaka.extern.ManifestParser`), `BjsnSegmentBytes` |
+| `bjsn_timing_probe.js` | `BjsnTimingProbe` — player-agnostic MSE instrumentation |
+| `spike-muxed-buffer.html` | Phase 1 architecture spike (see below) |
 
-Self-contained: `bjsn_player.html` loads only the two sibling scripts. No build
-step, no Shaka dependency.
+`bjsn_player.html` is self-contained: it loads only the two sibling scripts, with
+no build step and no Shaka dependency.
 
 ## Running
 
-Serve the repo root over HTTP (the player uses `fetch` + `ReadableStream`, so
-`file://` will not work) and open the page:
+Serve the repo root over HTTP (both players use `fetch` + `ReadableStream`, so
+`file://` will not work):
 
 ```bash
 python3 -m http.server 8080
-# → http://localhost:8080/demo/bjsn/bjsn_player.html
+# standalone → http://localhost:8080/demo/bjsn/bjsn_player.html
+# shaka      → http://localhost:8080/demo/bjsn/bjsn_shaka_player.html
 ```
 
-Paste the URL of a BJSN initial segment into the input and press Load. The
-player fetches that file progressively, then polls
-`template_path` with `seq_num + 1` for subsequent segments.
+Paste the URL of a BJSN segment into the input and press Load. The standalone
+player fetches that file progressively, then polls `template_path` with
+`seq_num + 1` for subsequent segments.
+
+The Shaka page needs `dist/deps.js` first, because it runs the library
+uncompiled through the Closure debug loader:
+
+```bash
+python3 build/gendeps.py     # writes dist/deps.js; no Java needed
+```
+
+That is the only build step the page needs, and it is far cheaper than a full
+`build/all.py`. If the page reports that the library never finished loading, a
+missing or stale `dist/deps.js` is the first thing to check.
+
+## Running the tests
+
+`python3 build/test.py` and `python3 build/all.py` need two things that are easy
+to lose:
+
+1. **Java on PATH.** The Closure compiler runs as `java -jar`, and the JDK
+   installed here is keg-only, so it is on PATH only if you put it there:
+
+   ```bash
+   export PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH"
+   ```
+
+2. **`node_modules/wd/build/`**, which `npm install` does *not* create on this
+   machine because `~/.npmrc` sets `ignore-scripts=true`. Without it karma dies
+   with `Cannot find plugin "karma-local-wd-launcher"` — which names the wrong
+   package; the one at fault is `wd`. Fix:
+
+   ```bash
+   node node_modules/wd/scripts/build-browser-scripts.js
+   ```
+
+   **Re-run this after every `npm install`.** It writes only inside
+   `node_modules/`, so no commit can carry it for you.
+
+A `chromedriver` matching your Chrome is required too, and is not currently
+installed — Shaka drives browsers only over WebDriver. See the plan's toolchain
+section for the full story on all three.
+
+## The Shaka player
+
+`bjsn_shaka_player.html` is the demo-level prototype of **Phase 3** of the
+integration plan, built to answer one question early: can `shaka.Player` play
+BJSN without touching `lib/`? It can. Three public extension points do it:
+
+| Extension point | Used for |
+| --- | --- |
+| `ManifestParser.registerParserByMime('application/bjsn', …)` | Registering the parser. Pass the mime type as `load()`'s third argument — a `.mp4` URL would otherwise be treated as progressive `src=` content. |
+| `InitSegmentReference.setSegmentData()` / `SegmentReference.setSegmentData()` | Handing over the already-downloaded first file, so it is never fetched twice. |
+| `NetworkingEngine.registerResponseFilter()` | Stripping `bjsn` out of subsequent segments and reading the in-band `seq_num` back out of them. |
+
+### Shape: Option A, and why *not* `isAudioMuxedInVideo`
+
+Per the Phase 1 spike the parser publishes a **single** video `Stream` whose
+codec string carries both codecs (`video/mp4; codecs="avc1.42E01E,mp4a.40.2"`)
+and leaves `variant.audio` null. One SourceBuffer, file appended as-is, browser
+decodes both tracks.
+
+`stream.isAudioMuxedInVideo` looks like the obvious flag for this and is the
+wrong one: it sets `needSplitMuxedContent_` in `media_source_engine.js`, which
+makes Shaka *demux* into two buffers — the opposite of Option A, and the
+HLS-shaped path where v1 already hit a bug. What actually makes Option A work is
+`stream_utils.js` `getDecodingConfigs_()` (lines ~806–831), which already handles
+a comma-separated video codec list with no separate audio stream by building both
+an `AudioConfiguration` and a `VideoConfiguration` for MediaCapabilities. A muxed
+video-only variant is therefore a first-class shape in Shaka and needs no core
+diff.
+
+The cost is Option A's usual one: no independent audio track selection and no
+per-track ABR. `player.getVariantTracks()` reports one video-only variant.
+
+### Verified behaviour (2026-07-29, Chrome, synthetic fixture set)
+
+Loading `test/test/assets/bjsn/media_11905.mp4`:
+
+- **one** SourceBuffer, `video/mp4; codecs="avc1.42E01E,mp4a.40.2"`
+- init append classified `ftyp+moov`, media appends `styp+moof+mdat…` — so
+  `styp` survives the strip, which §3.1 warns about
+- both tracks decode (video *and* non-zero audio bytes), rendered 270x480
+- playback starts at `t0` = 2333.176 s, the first segment, and runs through all
+  five fixtures to 2343.176 s
+- 6 appends total: 1 init + 5 media, 827731 bytes
+
+Startup marks from a representative run: source open 16 ms, first byte 38 ms,
+`bjsn` parsed 50 ms, `moov` parsed 47 ms, manifest ready 54 ms, `player.load()`
+resolved 101 ms, init append 112 ms, first media append 147 ms, `canplay`
+118–148 ms, playing 191 ms.
+
+### Two things this prototype got wrong first, worth not repeating
+
+- **Shaka starts a live stream at the live edge.** At manifest time the index
+  holds exactly one reference, so the live edge *is* that segment's end — and
+  Shaka began at `seq_num + 1`, skipping the file the user asked for and
+  discarding the bytes retained for `setSegmentData()`. Fixed by setting
+  `manifest.startTime = t0`, which the extern documents as overriding the load
+  start time when that is not defined.
+- **Never publish references on a timer alone.** Adding one reference per segment
+  duration regardless of what exists lets `notifySegments()` drag the live edge
+  away from the content: in a first run the index advertised out to `seq 12006`
+  (media time 2539 s) while the origin was stuck at 11909, so the play head
+  chased an edge with no media behind it and every fetch 404'd. A real origin
+  that pauses publication produces the same failure. The parser now keeps at most
+  **one** unconfirmed reference outstanding, gated on the `seq_num` read from the
+  in-band `bjsn` box, and anchors each new reference to the *real* media end time
+  of the segment that arrived rather than accumulating duration estimates.
+
+### The timing probe
+
+`bjsn_timing_probe.js` measures startup by wrapping the MSE entry points any MSE
+player must go through — the `MediaSource` constructor (for `sourceopen`),
+`addSourceBuffer()`, and `appendBuffer()` — classifying each append as init or
+media by sniffing its box types. Because it hooks the platform rather than the
+player, it measures both players on identical axes, which is what makes them
+comparable for Phase 6. Steps the platform cannot see (first byte, `bjsn`
+parsed, `moov` parsed) are marked explicitly by the page.
+
+The patches are global but scoped to a session and fully restored on stop. It is
+a test-harness technique and has no business anywhere near `lib/`.
+
+Option A means there is a single SourceBuffer, so the standalone player's
+separate "video init append" and "audio init append" numbers collapse into one
+init append. The panel says so rather than inventing two values.
 
 ## Test fixtures
 
@@ -159,6 +293,34 @@ node tools/bjsn-stripper-cli.js --info test/test/assets/bjsn-initial-segment.mp4
 See [`tools/README.md`](../../tools/README.md).
 
 ## Known quirks
+
+### Both players
+
+- **Chrome gates media on tab visibility, not focus.** A muted element in a
+  hidden or backgrounded tab gets paused as "video-only background media", which
+  looks exactly like a player stall and makes "Time to Playing" meaningless. The
+  Shaka page detects this case and says so in the log and the metrics panel
+  rather than letting the number mislead; read any startup timing with the window
+  in front.
+
+### The Shaka player
+
+- **`update()` is wired to the live loop.** Shaka only calls a parser's
+  `update()` when an `emsg` box asks for it, which BJSN does not use, so the
+  parser drives its own timer. `update()` is left connected anyway so an `emsg`
+  cannot be silently ignored.
+- **Gear switching is not implemented.** `gear_list` is parsed and the first
+  gear's `realtime_bitrate` becomes the variant bandwidth; nothing switches. The
+  `Range: bytes=0-0` pre-warm and the `Old-Gear-Path`/`Abr-Downgrade` handshake
+  from plan §2b are not implemented either — that is Phase 7.
+- **`Last-Segment-Duration` is read but lags.** It describes the *previous*
+  segment, so it cannot size the first one; the parser derives the first
+  duration from `tfdt` deltas and prefers the header afterwards.
+- **BJSN-specific parse failures reuse `UNABLE_TO_GUESS_MANIFEST_TYPE`.** There
+  is no BJSN error code, and inventing one would mean editing `lib/util/error.js`.
+  The message carries the real reason.
+
+### The standalone player
 
 Worth knowing before you use this player as a behavioural reference:
 
