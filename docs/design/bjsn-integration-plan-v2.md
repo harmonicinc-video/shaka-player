@@ -64,6 +64,13 @@ Done:
 - **Phase 1 — spike.** §3.1. **Option A chosen**: a single SourceBuffer declaring
   both codecs decodes both tracks of an interleaved BJSN file. No demux, no
   transmuxer plugin, no per-track init synthesis.
+- **Customer spec received and reconciled** (2026-07-29). §2b. Confirmed four
+  previously-unverified assumptions, added the `Last-Segment-Duration` header /
+  `Range: bytes=0-0` pre-warm / `Old-Gear-Path` fallback / per-gear DRM to this
+  plan, and settled the segment-layout question below.
+- **Segment layout settled.** §2, §2b. **Every** segment carries
+  `ftyp`+`moov`+`bjsn`+`styp` and begins with an IDR, so any segment starts
+  playback cold. Fixtures regenerated to match and verified to decode standalone.
 
 What exists to build on:
 
@@ -72,7 +79,7 @@ What exists to build on:
 | Working standalone MSE player (the behavioural contract, §2) | `demo/bjsn/bjsn_player.html` + `bjsn_utils.js` + `bjsn_mse.js` |
 | Architecture spike harness, takes any segment by `?url=` | `demo/bjsn/spike-muxed-buffer.html` |
 | Real captured initial segment (77 KB) | `test/test/assets/bjsn-initial-segment.mp4` |
-| Synthetic 5-segment set, seamless `tfdt` across files | `test/test/assets/bjsn/media_11905..11909.mp4` |
+| Synthetic 5-segment set: every segment self-initialising and cold-startable, seamless `tfdt` across files | `test/test/assets/bjsn/media_11905..11909.mp4` |
 | Generator for longer/other runs | `tools/bjsn-make-test-asset.js` |
 | Segment inspector / `bjsn` stripper | `tools/bjsn-stripper-cli.js` |
 | Fixture provenance, quirks, how to run things | `demo/bjsn/README.md`, `tools/README.md` |
@@ -81,9 +88,9 @@ What exists to build on:
 with unit tests, then repoint `demo/bjsn/` at them so the reference player and the
 library cannot drift.
 
-⚠️ **Three decisions in §8 are still unanswered and gate Phase 2** — most
-importantly whether ABR must land this round, since that determines whether
-Option A is even eligible. Resolve them before writing `lib/` code.
+⚠️ **Two decisions in §8 are still unanswered and gate Phase 2** — most
+importantly whether ABR must land this round, since Option A cannot do per-track
+ABR and §3.1 would have to be reopened. Resolve both before writing `lib/` code.
 
 ## 1. Why v1 did not work
 
