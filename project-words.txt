@@ -604,5 +604,33 @@ vaage
 webapis
 WHATWG
 
+# BJSN -- TikTok's CMAF-without-a-manifest format.
+# See docs/design/bjsn-integration-plan-v2.md
+bjsn
+Bytedance
+TikTok
+demux
+demuxed
+moofs
+styp
+testdata
+
+# ISO BMFF box and sample-entry field names used by the BJSN parsers
+channelcount
+samplesize
+Descr
+
+# Tools, protocols and orgs named in the BJSN design docs
+CCTK
+ECONNREFUSED
+ETIMEDOUT
+ffprobe
+harmonicinc
+libexec
+QUIC
+startable
+unreviewable
+upstreamable
+
 # banned words
 !timmer

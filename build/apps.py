@@ -43,11 +43,18 @@ def compile_demo(force, is_debug):
   closure_base_js = shakaBuildHelpers.get_closure_base_js_path()
   get = shakaBuildHelpers.get_all_js_files
   cast_receiver = set(get('demo', 'cast_receiver'))
+  # The BJSN test harness under demo/bjsn/ is not part of the demo app: its
+  # pages load their own scripts directly and never go through this bundle.
+  # It also uses syntax newer than this compilation's language level (public
+  # class fields), so compiling it in fails the build outright.  Excluded the
+  # same way as the cast receiver, which is likewise a separate context.
+  # See docs/design/bjsn-integration-plan-v2.md.
+  bjsn = set(get('demo', 'bjsn'))
   files = set(
       get('demo') +
       get('externs') +
       get('ui', 'externs') +
-      [closure_base_js]) - cast_receiver
+      [closure_base_js]) - cast_receiver - bjsn
 
   # Make sure we don't compile in load.js, which will be used to bootstrap
   # everything else.  If we build that into the output, we will get an
