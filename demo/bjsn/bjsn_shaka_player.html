@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BJSN Player (Shaka) - Harmonic Inc</title>
+  <link rel="dns-prefetch" href="//tiktok-demo-ap-origin.trymonic.com">
+  <style>
+    :root {
+      /* Harmonic Inc Brand Colors */
+      --color-scooter: #25B0D9;
+      --color-alice-blue: #F4FAFF;
+      --color-white: #FFFFFF;
+      --color-tangaroa: #03243D;
+
+      /* Derived colors */
+      --color-scooter-light: rgba(37, 176, 217, 0.1);
+      --color-scooter-hover: #1e8db3;
+      --color-tangaroa-light: rgba(3, 36, 61, 0.05);
+      --color-border: rgba(3, 36, 61, 0.1);
+
+      /* Shadows */
+      --shadow-sm: 0 1px 3px rgba(3, 36, 61, 0.06);
+      --shadow-md: 0 4px 12px rgba(3, 36, 61, 0.1);
+      --shadow-lg: 0 10px 25px rgba(3, 36, 61, 0.1);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background-color: var(--color-alice-blue);
+      color: var(--color-tangaroa);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* Header */
+    .header {
+      background: linear-gradient(135deg, var(--color-tangaroa) 0%, #04344f 100%);
+      color: var(--color-white);
+      padding: 2rem 0;
+      box-shadow: var(--shadow-md);
+    }
+
+    .header-content {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 2rem;
+    }
+
+    .header h1 {
+      font-size: 2.5rem;
+      font-weight: 300;
+      letter-spacing: -0.5px;
+      margin-bottom: 0.5rem;
+    }
+
+    .header h1 strong {
+      font-weight: 600;
+      color: var(--color-scooter);
+    }
+
+    .engine-badge {
+      display: inline-block;
+      margin-left: 0.75rem;
+      padding: 0.15rem 0.7rem;
+      border-radius: 20px;
+      background: var(--color-scooter);
+      color: var(--color-white);
+      font-size: 0.9rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      vertical-align: middle;
+    }
+
+    .subtitle {
+      font-size: 1rem;
+      opacity: 0.8;
+      font-weight: 300;
+    }
+
+    /* Main Container */
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+
+    /* Input Section */
+    .input-section {
+      background: var(--color-white);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--color-border);
+    }
+
+    .input-wrapper {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+    }
+
+    .input-field {
+      flex: 1;
+      padding: 0.75rem 1rem;
+      font-size: 1rem;
+      border: 2px solid var(--color-border);
+      border-radius: 8px;
+      background: var(--color-white);
+      color: var(--color-tangaroa);
+      transition: all 0.3s ease;
+    }
+
+    .input-field:focus {
+      outline: none;
+      border-color: var(--color-scooter);
+      box-shadow: 0 0 0 3px var(--color-scooter-light);
+    }
+
+    .load-button {
+      padding: 0.75rem 2rem;
+      background: var(--color-scooter);
+      color: var(--color-white);
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .load-button:hover:enabled {
+      background: var(--color-scooter-hover);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
+
+    .load-button:active {
+      transform: translateY(0);
+    }
+
+    .load-button:disabled {
+      background: #b8c4cc;
+      cursor: not-allowed;
+    }
+
+    .options-row {
+      display: flex;
+      gap: 1.5rem;
+      align-items: center;
+      margin-top: 1rem;
+      font-size: 0.9rem;
+      flex-wrap: wrap;
+    }
+
+    .options-row label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      cursor: pointer;
+    }
+
+    /* Main Content Grid */
+    .main-content {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 2rem;
+      align-items: start;
+    }
+
+    /* Video Section */
+    .video-section {
+      background: var(--color-tangaroa);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-lg);
+    }
+
+    video {
+      width: 100%;
+      height: auto;
+      max-height: 70vh;
+      display: block;
+      background-color: #000;
+    }
+
+    /* Info Panel */
+    .info-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .info-box {
+      background: var(--color-white);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--color-border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .info-box-header {
+      background: linear-gradient(135deg, var(--color-scooter) 0%, #1e8db3 100%);
+      color: var(--color-white);
+      padding: 1rem 1.5rem;
+      font-weight: 500;
+      font-size: 1.1rem;
+      letter-spacing: 0.5px;
+    }
+
+    .info-box-content {
+      padding: 1rem;
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+      font-size: 0.8rem;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-y: auto;
+      background: #fafbfc;
+      color: var(--color-tangaroa);
+    }
+
+    #mediaInfo {
+      max-height: 260px;
+    }
+
+    #perfMetrics {
+      max-height: 420px;
+    }
+
+    #timelineInfo {
+      max-height: 200px;
+    }
+
+    #log {
+      height: 320px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--color-scooter-light) transparent;
+    }
+
+    #log::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    #log::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    #log::-webkit-scrollbar-thumb {
+      background: var(--color-scooter-light);
+      border-radius: 4px;
+    }
+
+    #log::-webkit-scrollbar-thumb:hover {
+      background: var(--color-scooter);
+    }
+
+    /* Loading Animation */
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.6; }
+      100% { opacity: 1; }
+    }
+
+    /* Status Indicator */
+    .status-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0.75rem;
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 20px;
+      font-size: 0.875rem;
+      margin-left: 1rem;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #7CFFB2;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .status-dot.inactive {
+      background: #999;
+      animation: none;
+    }
+
+    .banner {
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+      background: var(--color-scooter-light);
+      border: 1px solid var(--color-scooter);
+    }
+
+    .banner.error {
+      background: rgba(217, 45, 37, 0.08);
+      border-color: #d92d25;
+      color: #8c1a15;
+    }
+
+    .banner.hidden {
+      display: none;
+    }
+
+    /* Responsive Design */
+    @media (max-width: 1024px) {
+      .main-content {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .header h1 { font-size: 2rem; }
+      .container { padding: 1rem; }
+      .input-wrapper { flex-direction: column; }
+      .load-button { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-content">
+      <h1><strong>BJSN</strong> Player<span class="engine-badge">SHAKA</span>
+        <span class="status-indicator" id="statusIndicator">
+          <span class="status-dot inactive"></span>
+          <span id="statusText">Loading library&hellip;</span>
+        </span>
+      </h1>
+      <p class="subtitle">
+        BJSN played through shaka.Player via a demo-level manifest parser plugin
+        &mdash; same startup metrics as the standalone MSE player
+      </p>
+    </div>
+  </header>
+
+  <div class="container">
+    <div id="banner" class="banner">
+      Loading the uncompiled Shaka Player library through the Closure debug
+      loader. This needs <code>dist/deps.js</code>, which
+      <code>python3 build/gendeps.py</code> generates.
+    </div>
+
+    <div class="input-section">
+      <div class="input-wrapper">
+        <input
+          type="text"
+          id="urlInput"
+          class="input-field"
+          value="../../test/test/assets/bjsn/media_11905.mp4"
+          placeholder="Enter BJSN segment URL..."
+        />
+        <button id="loadButton" class="load-button" disabled>
+          Load Stream
+        </button>
+      </div>
+      <div class="options-row">
+        <label>
+          <input type="checkbox" id="lowLatency" />
+          Low latency mode (chunked append)
+        </label>
+        <label>
+          <input type="checkbox" id="autoPlay" checked />
+          Autoplay
+        </label>
+        <label>
+          <input type="checkbox" id="muted" checked />
+          Start muted (autoplay policy)
+        </label>
+      </div>
+    </div>
+
+    <div class="main-content">
+      <div class="video-section">
+        <video controls autoplay playsinline></video>
+      </div>
+
+      <div class="info-panel">
+        <div class="info-box">
+          <div class="info-box-header">Media Information</div>
+          <pre id="mediaInfo" class="info-box-content"></pre>
+        </div>
+
+        <div class="info-box">
+          <div class="info-box-header">Performance Metrics</div>
+          <pre id="perfMetrics" class="info-box-content"></pre>
+        </div>
+
+        <div class="info-box">
+          <div class="info-box-header">Timeline &amp; Buffer</div>
+          <pre id="timelineInfo" class="info-box-content"></pre>
+        </div>
+
+        <div class="info-box">
+          <div class="info-box-header">Activity Log</div>
+          <pre id="log" class="info-box-content"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!--
+    Uncompiled Shaka, loaded through the Closure debug loader.  The BJSN scripts
+    below do not touch `shaka.*` at load time, so their ordering relative to the
+    library's own dynamically-inserted scripts does not matter; the bootstrap at
+    the bottom waits for the library before registering anything.
+  -->
+  <script>
+    // The Closure debug loader inserts further scripts through this hook.
+    // Deferred and non-async, so execution order is preserved.
+    window.CLOSURE_IMPORT_SCRIPT = function(src) {
+      const script = document.createElement('script');
+      script.type = 'text/javascript';
+      script.src = src;
+      script.defer = true;
+      script.async = false;  // eslint-disable-line id-denylist
+      document.head.appendChild(script);
+      return true;  // Or the Closure loader stops.
+    };
+  </script>
+  <script defer src="../../node_modules/google-closure-library/closure/goog/base.js"></script>
+  <script defer src="../../dist/deps.js"></script>
+  <script defer src="../../lib/debug/asserts.js"></script>
+  <script defer src="../../shaka-player.uncompiled.js"></script>
+
+  <!--
+    BJSN modules: plain scripts, no Closure involvement, and deliberately NOT
+    deferred.  The page logic below is an inline script, which runs during
+    parsing -- i.e. before any deferred script - so these must run
+    synchronously to be visible to it.  None of them touch `shaka.*` at load
+    time, so running them ahead of the library is fine.
+  -->
+  <script src="bjsn_utils.js"></script>
+  <script src="bjsn_timing_probe.js"></script>
+  <script src="bjsn_shaka_parser.js"></script>
+
+  <script type="text/javascript">
+    (function() {
+      const video = document.querySelector('video');
+      const logElement = document.getElementById('log');
+      const mediaInfoElement = document.getElementById('mediaInfo');
+      const perfMetricsElement = document.getElementById('perfMetrics');
+      const timelineElement = document.getElementById('timelineInfo');
+      const urlInput = document.getElementById('urlInput');
+      const loadButton = document.getElementById('loadButton');
+      const statusText = document.getElementById('statusText');
+      const statusDot = document.querySelector('.status-dot');
+      const banner = document.getElementById('banner');
+      const lowLatencyBox = document.getElementById('lowLatency');
+      const autoPlayBox = document.getElementById('autoPlay');
+      const mutedBox = document.getElementById('muted');
+
+      const MAX_LOG_LINES = 300;
+      const probe = new BjsnTimingProbe();
+
+      /** @type {?shaka.Player} */
+      let player = null;
+      /** Per-session state, reset on every Load. */
+      let session = null;
+      let uiTimer = null;
+
+      function log(message, ...args) {
+        console.log(message, ...args);
+        const timestamp = new Date().toLocaleTimeString();
+        const extra = args.length ?
+            ' ' + args.map((a) => safeJson(a)).join(' ') : '';
+        const text = `[${timestamp}] ${message}${extra}`;
+
+        let lines = logElement.textContent.split('\n').filter((l) => l.trim());
+        lines.push(text);
+        if (lines.length > MAX_LOG_LINES) {
+          lines = lines.slice(lines.length - MAX_LOG_LINES);
+        }
+        logElement.textContent = lines.join('\n');
+        logElement.scrollTop = logElement.scrollHeight;
+      }
+
+      function safeJson(value) {
+        if (typeof value === 'string') {
+          return value;
+        }
+        try {
+          return JSON.stringify(value, jsonReplacer, 2);
+        } catch (e) {
+          return String(value);
+        }
+      }
+
+      function jsonReplacer(key, value) {
+        if (value instanceof Set) {
+          return Array.from(value);
+        }
+        if (value instanceof Map) {
+          return Object.fromEntries(value);
+        }
+        if (value instanceof Uint8Array) {
+          return `<${value.byteLength} bytes>`;
+        }
+        return value;
+      }
+
+      function setStatus(text, active) {
+        statusText.textContent = text;
+        statusDot.classList.toggle('inactive', !active);
+      }
+
+      function showBanner(text, isError) {
+        banner.textContent = text;
+        banner.classList.remove('hidden');
+        banner.classList.toggle('error', !!isError);
+      }
+
+      function hideBanner() {
+        banner.classList.add('hidden');
+      }
+
+      function ms(value) {
+        return value === null || value === undefined ?
+            'n/a' : `${Math.round(value)}ms`;
+      }
+
+      function secs(value, digits = 3) {
+        return value === null || value === undefined || !isFinite(value) ?
+            'n/a' : `${value.toFixed(digits)}s`;
+      }
+
+      // ------------------------------------------------------ library boot
+
+      function waitForShaka(timeoutMs) {
+        const startedAt = Date.now();
+        return new Promise((resolve, reject) => {
+          (function check() {
+            if (window.shaka && window.shaka.Player && window.shaka.polyfill &&
+                window.shaka.media && window.shaka.media.ManifestParser) {
+              resolve();
+              return;
+            }
+            if (Date.now() - startedAt > timeoutMs) {
+              reject(new Error(
+                  'Shaka Player did not finish loading. In uncompiled mode ' +
+                  'this usually means dist/deps.js is missing or stale -- ' +
+                  'run: python3 build/gendeps.py'));
+              return;
+            }
+            setTimeout(check, 25);
+          })();
+        });
+      }
+
+      async function bootstrap() {
+        try {
+          await waitForShaka(30000);
+        } catch (e) {
+          setStatus('Library failed to load', false);
+          showBanner(e.message, true);
+          log('ERROR: ' + e.message);
+          return;
+        }
+
+        shaka.polyfill.installAll();
+        if (!shaka.Player.isBrowserSupported()) {
+          setStatus('Browser unsupported', false);
+          showBanner('This browser is not supported by Shaka Player.', true);
+          return;
+        }
+
+        BjsnShakaParser.register();
+        hideBanner();
+        setStatus('Ready', false);
+        loadButton.disabled = false;
+
+        log(`Shaka Player ${shaka.Player.version} loaded (uncompiled)`);
+        log(`Registered BJSN manifest parser for mime "${BJSN_MIME_TYPE}"`);
+        log('Architecture: Option A - one muxed SourceBuffer declaring both ' +
+            'codecs, zero diff to lib/');
+      }
+
+      // ------------------------------------------------------ session setup
+
+      function newSession() {
+        return {
+          bjsn: null,
+          tracks: null,
+          initInfo: null,
+          manifestInfo: null,
+          segments: [],
+          loadResolvedAt: null,
+          error: null,
+          pausedWhileHidden: false,
+        };
+      }
+
+      function installParserHooks() {
+        BjsnShakaParser.hooks.onLog = (message, ...args) => log(message, ...args);
+        BjsnShakaParser.hooks.onFirstByte = () => probe.mark('firstByte');
+        BjsnShakaParser.hooks.onBjsn = (bjsn) => {
+          probe.mark('bjsnParsed');
+          session.bjsn = bjsn;
+          renderMediaInfo();
+        };
+        BjsnShakaParser.hooks.onInit = (tracks, info) => {
+          probe.mark('moovParsed');
+          session.tracks = tracks;
+          session.initInfo = info;
+          renderMediaInfo();
+        };
+        BjsnShakaParser.hooks.onManifest = (info) => {
+          probe.mark('manifestReady');
+          session.manifestInfo = info;
+          renderMediaInfo();
+        };
+        BjsnShakaParser.hooks.onSegmentAdded = (seqNum, start, end) => {
+          session.segments.push({seqNum, start, end});
+          if (session.segments.length > 50) {
+            session.segments.shift();
+          }
+        };
+        BjsnShakaParser.hooks.onSegmentResponse = (uri, info) => {
+          log(`[parser] segment response ${uri.split('/').pop()}: ` +
+              `${info.boxes.join('+')} ${info.originalBytes}B -> ` +
+              `${info.strippedBytes}B (seq ${info.seqNum})`);
+        };
+      }
+
+      function attachPlayerListeners() {
+        const on = (name, fn) => player.addEventListener(name, fn);
+
+        on('error', (event) => {
+          const error = event.detail;
+          session.error = error;
+          log('SHAKA ERROR', {
+            code: error.code,
+            category: error.category,
+            severity: error.severity,
+            data: error.data,
+          });
+          showBanner(
+              `Shaka error ${error.category}.${error.code}: ` +
+              `${(error.data || []).join(' ')}`, true);
+          setStatus('Error', false);
+        });
+
+        on('loading', () => log('player event: loading'));
+        on('manifestparsed', () => {
+          probe.mark('manifestParsedEvent');
+          log('player event: manifestparsed');
+        });
+        on('streaming', () => {
+          probe.mark('streamingEvent');
+          log('player event: streaming');
+        });
+        on('loaded', () => {
+          probe.mark('loadedEvent');
+          log('player event: loaded');
+        });
+        on('buffering', (event) => {
+          log(`player event: buffering=${event.buffering}`);
+          if (!event.buffering) {
+            probe.mark('bufferingEnded');
+          }
+        });
+        on('adaptation', () => log('player event: adaptation'));
+        on('stalldetected', () => {
+          probe.count('stalls');
+          log('player event: stalldetected');
+        });
+        on('gapjumped', () => {
+          probe.count('gapsJumped');
+          log('player event: gapjumped');
+        });
+      }
+
+      function attachVideoListeners() {
+        video.addEventListener('play', () => {
+          probe.mark('play');
+          log('video event: play');
+        });
+        video.addEventListener('playing', () => {
+          if (probe.mark('playing')) {
+            log(`video event: playing (${ms(probe.get('playing'))} after load)`);
+          }
+          setStatus('Playing', true);
+          renderMetrics();
+        });
+        video.addEventListener('canplay', () => {
+          probe.mark('canplay');
+          log('video event: canplay');
+        });
+        video.addEventListener('waiting', () => log('video event: waiting'));
+        video.addEventListener('pause', () => {
+          // Chrome pauses muted, backgrounded media to save power. It looks
+          // exactly like a player stall, and it makes "Time to Playing"
+          // meaningless, so say so rather than let the number mislead.
+          if (document.visibilityState === 'hidden') {
+            session.pausedWhileHidden = true;
+            log('video event: pause — the tab is hidden and the media is ' +
+                'muted, so the browser paused it to save power. Startup ' +
+                'timings past this point are not comparable.');
+          } else {
+            log('video event: pause');
+          }
+        });
+        video.addEventListener('seeking', () => {
+          log(`video event: seeking to ${video.currentTime.toFixed(3)}s`);
+        });
+        video.addEventListener('error', () => {
+          const err = video.error;
+          log('video element error', err ? {code: err.code, message: err.message} : null);
+        });
+      }
+
+      // ---------------------------------------------------------- rendering
+
+      function renderMediaInfo() {
+        const parts = [];
+
+        if (session.bjsn) {
+          parts.push('BJSN box:');
+          parts.push(indent(JSON.stringify(session.bjsn, null, 2)));
+        }
+
+        if (session.tracks) {
+          parts.push('');
+          parts.push('Tracks in moov:');
+          for (const track of session.tracks) {
+            parts.push(`  track ${track.id}  ${track.handlerType}  ` +
+                `timescale ${track.timescale}`);
+          }
+        }
+
+        if (session.initInfo) {
+          const p = session.initInfo.params || {};
+          parts.push('');
+          parts.push('Detected:');
+          parts.push(`  video codec   ${session.initInfo.codecs.video}`);
+          parts.push(`  audio codec   ${session.initInfo.codecs.audio}`);
+          if (p.width && p.height) {
+            parts.push(`  resolution    ${p.width}x${p.height}`);
+          }
+          if (p.channelCount) {
+            parts.push(`  audio         ${p.channelCount}ch @ ${p.sampleRate}Hz`);
+          }
+          parts.push(`  init segment  ${session.initInfo.initBytes} bytes ` +
+              `(ftyp+moov, unfiltered)`);
+        }
+
+        if (session.manifestInfo) {
+          parts.push('');
+          parts.push('Manifest:');
+          parts.push(`  mime          ${session.manifestInfo.mimeType}`);
+          parts.push(`  codecs        ${session.manifestInfo.codecs}`);
+          parts.push(`  t0            ${secs(session.manifestInfo.t0)}`);
+          parts.push(`  live          ${session.manifestInfo.isLive}`);
+        }
+
+        if (player && player.getVariantTracks) {
+          const variants = player.getVariantTracks();
+          if (variants.length) {
+            parts.push('');
+            parts.push('Shaka variant tracks:');
+            for (const v of variants) {
+              parts.push(`  #${v.id} ${v.width || '?'}x${v.height || '?'} ` +
+                  `${v.videoCodec || '?'} / ${v.audioCodec || '(muxed)'} ` +
+                  `${v.bandwidth ? Math.round(v.bandwidth / 1000) + 'kbps' : ''}` +
+                  `${v.active ? '  [active]' : ''}`);
+            }
+          }
+        }
+
+        mediaInfoElement.textContent = parts.length ?
+            parts.join('\n') : 'Waiting for a stream…';
+      }
+
+      function indent(text) {
+        return text.split('\n').map((line) => '  ' + line).join('\n');
+      }
+
+      function renderMetrics() {
+        const lines = [];
+        const playing = probe.get('playing');
+
+        lines.push(`Time to Playing: ${ms(playing)}`);
+        lines.push(`Status: ${playing !== null ? 'Playing' : 'Loading…'}`);
+        if (session.pausedWhileHidden) {
+          lines.push('⚠ The browser paused this muted stream while the tab');
+          lines.push('  was hidden. Re-run with the tab visible for a valid');
+          lines.push('  "Time to Playing".');
+        }
+        lines.push('');
+        lines.push('Detailed Timing Breakdown:');
+        const rows = [
+          ['Source Open', 'sourceOpen'],
+          ['First Byte', 'firstByte'],
+          ['BJSN Parse', 'bjsnParsed'],
+          ['Init (moov) Parsed', 'moovParsed'],
+          ['Manifest Ready', 'manifestReady'],
+          ['manifestparsed event', 'manifestParsedEvent'],
+          ['SourceBuffer Created', 'sourceBufferCreated'],
+          ['Init Append', 'initAppend'],
+          ['Init Append Done', 'initAppendDone'],
+          ['First Media Append', 'firstMediaAppend'],
+          ['First Media Append Done', 'firstMediaAppendDone'],
+          ['streaming event', 'streamingEvent'],
+          ['canplay', 'canplay'],
+          ['video.play()', 'play'],
+          ['Playing State', 'playing'],
+          ['loaded event', 'loadedEvent'],
+          ['player.load() resolved', 'loadResolved'],
+        ];
+        const width = Math.max(...rows.map((r) => r[0].length));
+        for (const [label, key] of rows) {
+          const note = probe.getNote(key);
+          lines.push(`  ${label.padEnd(width)}  ${ms(probe.get(key))}` +
+              (note ? `   ${note}` : ''));
+        }
+
+        lines.push('');
+        lines.push('Appends:');
+        lines.push(`  total ${probe.counter('appends')} ` +
+            `(init ${probe.counter('initAppends')}, ` +
+            `media ${probe.counter('mediaAppends')}), ` +
+            `${probe.counter('appendedBytes')} bytes`);
+        const snapshot = probe.snapshot();
+        lines.push(`  SourceBuffers: ${snapshot.sourceBuffers.length}`);
+        for (const buffer of snapshot.sourceBuffers) {
+          lines.push(`    ${buffer.mime}`);
+          lines.push(`      created ${ms(buffer.createdAt)}, ` +
+              `${buffer.appends} appends`);
+        }
+
+        if (player && player.getStats) {
+          const stats = player.getStats();
+          lines.push('');
+          lines.push('Shaka stats:');
+          lines.push(`  loadLatency        ${secs(stats.loadLatency)}`);
+          lines.push(`  manifestTime       ${secs(stats.manifestTimeSeconds)}`);
+          lines.push(`  bufferingTime      ${secs(stats.bufferingTime)}`);
+          lines.push(`  playTime           ${secs(stats.playTime)}`);
+          lines.push(`  estimatedBandwidth ${
+            isFinite(stats.estimatedBandwidth) ?
+              (stats.estimatedBandwidth / 1e6).toFixed(2) + ' Mbps' : 'n/a'}`);
+          lines.push(`  frames             ${stats.decodedFrames} decoded, ` +
+              `${stats.droppedFrames} dropped, ` +
+              `${stats.corruptedFrames} corrupted`);
+          lines.push(`  gapsJumped/stalls  ${stats.gapsJumped} / ` +
+              `${stats.stallsDetected}`);
+          lines.push(`  bytesDownloaded    ${stats.bytesDownloaded}`);
+        }
+
+        lines.push('');
+        lines.push('Note: Option A appends both tracks to a single');
+        lines.push('SourceBuffer, so there is one init append rather than the');
+        lines.push('standalone player’s separate video/audio numbers.');
+        lines.push('"Source Open", the append marks and the buffer list come');
+        lines.push('from the MSE probe, so they are measured at the same');
+        lines.push('instants as in bjsn_player.html.');
+
+        perfMetricsElement.textContent = lines.join('\n');
+      }
+
+      function renderTimeline() {
+        const lines = [];
+
+        lines.push(`currentTime   ${secs(video.currentTime)}`);
+        lines.push(`readyState    ${video.readyState}`);
+        lines.push(`paused        ${video.paused}`);
+        lines.push(`buffered      ${formatRanges(video.buffered)}`);
+
+        if (player && player.getManifest && player.getManifest()) {
+          const range = player.seekRange();
+          lines.push('');
+          lines.push(`isLive        ${player.isLive()}`);
+          lines.push(`seekRange     ${secs(range.start)} → ` +
+              `${secs(range.end)}`);
+          if (player.isLive()) {
+            lines.push(`liveLatency   ${secs(player.getStats().liveLatency)}`);
+          }
+          const info = player.getBufferedInfo();
+          lines.push(`shaka total   ${formatInfoRanges(info.total)}`);
+          lines.push(`shaka video   ${formatInfoRanges(info.video)}`);
+          lines.push(`shaka audio   ${formatInfoRanges(info.audio)}`);
+        }
+
+        if (session.segments.length) {
+          lines.push('');
+          lines.push(`References (${session.segments.length} shown, newest last):`);
+          for (const s of session.segments.slice(-6)) {
+            lines.push(`  seq ${s.seqNum}  ` +
+                `[${s.start.toFixed(3)} - ${s.end.toFixed(3)}]`);
+          }
+        }
+
+        timelineElement.textContent = lines.join('\n');
+      }
+
+      function formatRanges(ranges) {
+        if (!ranges || !ranges.length) {
+          return '[]';
+        }
+        const parts = [];
+        for (let i = 0; i < ranges.length; i++) {
+          parts.push(`[${ranges.start(i).toFixed(2)} - ` +
+              `${ranges.end(i).toFixed(2)}]`);
+        }
+        return `(${ranges.length}) ${parts.join(', ')}`;
+      }
+
+      function formatInfoRanges(ranges) {
+        if (!ranges || !ranges.length) {
+          return '[]';
+        }
+        return `(${ranges.length}) ` + ranges
+            .map((r) => `[${r.start.toFixed(2)} - ${r.end.toFixed(2)}]`)
+            .join(', ');
+      }
+
+      function startUiTimer() {
+        stopUiTimer();
+        uiTimer = setInterval(() => {
+          renderMetrics();
+          renderTimeline();
+        }, 250);
+      }
+
+      function stopUiTimer() {
+        if (uiTimer !== null) {
+          clearInterval(uiTimer);
+          uiTimer = null;
+        }
+      }
+
+      // ------------------------------------------------------------- loading
+
+      async function loadStream(uri) {
+        hideBanner();
+        session = newSession();
+        logElement.textContent = '';
+
+        if (player) {
+          log('Destroying the previous player');
+          stopUiTimer();
+          probe.stop();
+          await player.destroy();
+          player = null;
+        }
+
+        video.muted = mutedBox.checked;
+        video.autoplay = autoPlayBox.checked;
+
+        // Start the probe *before* the player exists, so it sees the
+        // MediaSource that Shaka is about to construct.
+        probe.start(() => {});
+        installParserHooks();
+
+        player = new shaka.Player();
+        player.configure({
+          streaming: {
+            lowLatencyMode: lowLatencyBox.checked,
+            // A BJSN 404 on the next segment is normal (not yet published), so
+            // let Shaka's own retry handle it rather than failing the load.
+            retryParameters: {
+              maxAttempts: 6,
+              baseDelay: 100,
+              backoffFactor: 2,
+              timeout: 10000,
+            },
+          },
+        });
+        attachPlayerListeners();
+        await player.attach(video);
+
+        setStatus('Loading', true);
+        startUiTimer();
+        log(`Loading ${uri} as "${BJSN_MIME_TYPE}"`);
+
+        try {
+          await player.load(uri, /* startTime= */ null, BJSN_MIME_TYPE);
+          probe.mark('loadResolved');
+          session.loadResolvedAt = probe.get('loadResolved');
+          log(`player.load() resolved at ${ms(session.loadResolvedAt)}`);
+          renderMediaInfo();
+          renderMetrics();
+          if (autoPlayBox.checked && video.paused) {
+            try {
+              await video.play();
+            } catch (e) {
+              log('video.play() rejected (autoplay policy?): ' + e.message);
+            }
+          }
+        } catch (error) {
+          if (error && error.code) {
+            log('player.load() failed', {
+              code: error.code, category: error.category, data: error.data,
+            });
+            showBanner(
+                `Load failed: ${error.category}.${error.code} ` +
+                `${(error.data || []).join(' ')}`, true);
+          } else {
+            log('player.load() failed: ' + (error && error.message));
+            showBanner('Load failed: ' + (error && error.message), true);
+          }
+          setStatus('Error', false);
+        }
+      }
+
+      loadButton.addEventListener('click', () => {
+        const uri = urlInput.value.trim();
+        if (!uri) {
+          log('URL input is empty');
+          return;
+        }
+        loadStream(uri);
+      });
+
+      urlInput.addEventListener('keypress', (event) => {
+        if (event.key === 'Enter') {
+          loadButton.click();
+        }
+      });
+
+      // An empty session up front, so the panels can render before the first
+      // load rather than special-casing "no session yet" in every renderer.
+      session = newSession();
+
+      attachVideoListeners();
+      renderMediaInfo();
+      renderMetrics();
+      renderTimeline();
+      bootstrap();
+    })();
+  </script>
+</body>
+</html>
