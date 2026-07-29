@@ -57,10 +57,12 @@ segment and cannot exercise timeline continuation. They live in their own
 directory because `template_path` resolution requires the segments to be
 siblings.
 
-`media_11905.mp4` is the initial segment; the other four carry no `ftyp`/`moov`.
-⚠️ **That may be wrong** — the customer spec implies every segment carries init.
-See `docs/design/bjsn-integration-plan-v2.md` §2b; these four files may need
-regenerating once one real subsequent segment has been captured.
+**All five are self-initialising** — `ftyp`+`moov`+`bjsn`+`styp`+fragments, each
+beginning with an IDR keyframe, so any one of them decodes and starts playback
+cold. That matches real BJSN traffic (confirmed by the customer 2026-07-29); see
+plan §2b. Verified by decoding each standalone: 60 video frames and no errors,
+for every segment.
+
 `tfdt` continues seamlessly across all five — each file's video ends 67 ticks
 (one cadence step) before the next begins, and audio exactly one 1024-sample AAC
 frame:
@@ -86,6 +88,13 @@ node tools/bjsn-make-test-asset.js --segments 30
 See `tools/README.md` for how the synthetic asset diverges from the real capture
 — notably audio timescale 44100 rather than 1000, and ~0 A/V start skew rather
 than ~10 ms.
+
+Because every segment is self-initialising, each one can be loaded directly in the
+spike harness or the player — useful for testing mid-stream joins:
+
+```
+/demo/bjsn/spike-muxed-buffer.html?url=/test/test/assets/bjsn/media_11907.mp4
+```
 
 **Local scratch** — `testdata/` at the repo root is `.gitignore`d. Put ad-hoc
 captures, other gears, and stripper output there. Only promote a file to
@@ -125,9 +134,9 @@ and reproducible:
 /demo/bjsn/spike-muxed-buffer.html?url=/test/test/assets/bjsn/media_11905.mp4
 ```
 
-It must be an **initial** segment (one containing `moov`); subsequent segments
-carry no init and are rejected with an explanatory message. Cross-origin URLs
-need CORS on the serving origin.
+It must be a segment containing `moov`. Every real BJSN segment does, so any of
+them work; a media-only file is rejected with an explanatory message.
+Cross-origin URLs need CORS on the serving origin.
 
 Re-run on the generated asset (2026-07-29): all three PASS, buffered
 `[2333.176–2335.196]`, 142118 video / 5081 audio bytes decoded, with mode B

@@ -30,9 +30,9 @@ node tools/bjsn-make-test-asset.js --verify testdata/bjsn/generated
 
 Output mirrors the real capture's structure: one `traf` per `moof`, video and
 audio moofs interleaved roughly 1:3, `tfdt` starting at a large non-zero media
-time and continuing seamlessly across segment files, and a `bjsn` box in every
-segment. Only the first segment carries `ftyp`+`moov` — but see the divergences
-below, because the customer spec suggests every segment should.
+time and continuing seamlessly across segment files, and `ftyp`+`moov`+`bjsn` in
+**every** segment, each starting with an IDR keyframe so any segment decodes cold
+— which is how real BJSN traffic behaves.
 
 The video has a burned-in timecode and frame counter, and the audio beeps at each
 whole second, so A/V sync can be judged by eye and ear.
@@ -49,12 +49,10 @@ libfreetype. Homebrew's default `ffmpeg` may lack it; the script auto-detects a
 - A/V start skew is ~0; the real capture has ~10 ms. So it does not exercise the
   "t0 = minimum across tracks" path.
 - One synthetic gear, versus nine in the real capture.
-- Subsequent segments contain a `bjsn` box. **Confirmed** by the customer spec
-  (V2.0, 16 May): every segment carries the metadata.
-- Subsequent segments contain **no** `ftyp`/`moov`. This is an assumption and
-  the customer spec suggests it is **wrong** — it says initial and subsequent
-  segments are "identical in content". A `--init-every-segment` flag and a
-  fixture regeneration are likely needed; see plan §2b.
+No longer divergent, both confirmed and now implemented: every segment carries a
+`bjsn` box, and every segment carries `ftyp`+`moov` so it can start playback cold
+(customer-confirmed 2026-07-29). `--init-once` reproduces the old init-once shape
+if you want to A/B a player against it.
 
 ---
 
@@ -172,20 +170,25 @@ $ node tools/bjsn-stripper-cli.js --info test/test/assets/bjsn-initial-segment.m
   Track 2: audio (soun) — 86 fragments
 ```
 
-### Example 2: A subsequent segment
+### Example 2: A mid-stream segment
 
-Handler types live in the `moov`, so a segment without one reports its tracks by
-the IDs found in the fragment headers:
+Every real BJSN segment is self-initialising, so a segment from the middle of a
+stream reports exactly like the first one:
 
 ```
-$ node tools/bjsn-stripper-cli.js --info test/test/assets/bjsn/media_11909.mp4
-📊 Segment kind: subsequent (no ftyp/moov — init lives in the initial segment)
+$ node tools/bjsn-stripper-cli.js --info test/test/assets/bjsn/media_11907.mp4
+📊 Segment kind: initial (has ftyp + moov)
   Fragments: 116 moof / 116 mdat
 
 📊 Tracks:
-  Track 1: track1 (unknown (no moov in this segment)) — 30 fragments
-  Track 2: track2 (unknown (no moov in this segment)) — 86 fragments
+  Track 1: video (vide) — 30 fragments
+  Track 2: audio (soun) — 86 fragments
 ```
+
+A file with no `moov` still parses — handler types live in the `moov`, so its
+tracks are reported as `track1`, `track2` by the IDs in the fragment headers — but
+you will only see that shape from `--init-once` output or a hand-trimmed file, not
+from real traffic.
 
 ### Example 3: Stripping
 

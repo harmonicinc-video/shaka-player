@@ -127,6 +127,12 @@ Generation options:
   --template <str>       template_path, must contain \${num} (default:
                          "media_\${num}.mp4")
   --gear-num <n>         bjsn gear_num to report (default: 1)
+  --init-every-segment   Every segment carries ftyp+moov+bjsn, identical in
+                         structure to the first. THE DEFAULT, and what real
+                         BJSN traffic does (customer spec V2.0, confirmed).
+  --init-once            Legacy shape: only the first segment carries
+                         ftyp+moov. Not real traffic; for A/B testing a
+                         player against init-once delivery.
   --keep-tmp             Keep intermediate ffmpeg renders for inspection
   --ffmpeg <path>        Force a specific ffmpeg binary
 
@@ -147,6 +153,10 @@ function parseArgs(argv) {
     seqNum: 11905,
     template: 'media_${num}.mp4',
     gearNum: 1,
+    // Real BJSN traffic makes every segment self-initialising (customer spec
+    // V2.0; confirmed 2026-07-29), so this is the default.  --init-once emits
+    // the older init-only-in-the-first-file shape for A/B testing a player.
+    initEverySegment: true,
     keepTmp: false,
     ffmpeg: null,
     verify: null,
@@ -172,6 +182,10 @@ function parseArgs(argv) {
       opts.template = argv[++i];
     } else if (a === '--gear-num') {
       opts.gearNum = parseInt(argv[++i], 10);
+    } else if (a === '--init-every-segment') {
+      opts.initEverySegment = true;
+    } else if (a === '--init-once') {
+      opts.initEverySegment = false;
     } else if (a === '--keep-tmp') {
       opts.keepTmp = true;
     } else if (a === '--ffmpeg') {
@@ -370,7 +384,8 @@ function toSmpteTimecode(seconds, fps) {
  * flushes every 2 frames (~67ms/moof), matching the real capture's video
  * cadence.
  */
-function renderVideoOnly(ffmpeg, outFile, totalDuration, startTime) {
+function renderVideoOnly(ffmpeg, outFile, totalDuration, startTime,
+    segDuration) {
   const timecode = toSmpteTimecode(startTime, FPS);
   const startFrame = Math.round(startTime * FPS);
   const videoFragUs = Math.round((1.5 / FPS) * 1e6);
@@ -386,7 +401,18 @@ function renderVideoOnly(ffmpeg, outFile, totalDuration, startTime) {
     `testsrc2=size=${WIDTH}x${HEIGHT}:rate=${FPS}:duration=${totalDuration}`,
     '-vf', vf,
     '-c:v', 'libx264', '-profile:v', 'baseline', '-level', '3.0',
-    '-pix_fmt', 'yuv420p', '-g', '9999',
+    '-pix_fmt', 'yuv420p',
+    // An IDR must land exactly on every segment boundary, or a segment that
+    // is not the first one starts mid-GOP and cannot be decoded cold --
+    // ffprobe reports "Missing reference picture" and zero video frames.
+    // Independent decodability per segment is the whole premise of BJSN's
+    // abr_pts flow, where the CDN may hand any cached segment to a starting
+    // client.  (The real capture corroborates this: its first video mdat is
+    // 7448 B against ~1.4-2.3 kB for the rest -- an IDR.)
+    '-g', String(Math.round(segDuration * FPS)),
+    '-keyint_min', String(Math.round(segDuration * FPS)),
+    '-sc_threshold', '0',
+    '-force_key_frames', `expr:gte(t,n_forced*${segDuration})`,
     '-an', '-video_track_timescale', String(VIDEO_TIMESCALE),
     '-frag_duration', String(videoFragUs),
     '-movflags', 'empty_moov+default_base_moof',
@@ -438,6 +464,8 @@ function renderMoovHarvest(ffmpeg, outFile) {
     `aevalsrc=exprs='0':sample_rate=${AUDIO_SAMPLE_RATE}:duration=0.5`,
     '-c:v', 'libx264', '-profile:v', 'baseline', '-level', '3.0',
     '-pix_fmt', 'yuv420p', '-g', '9999',
+    // No keyframe forcing needed: this render's media is discarded and
+    // only its moov (both traks + mvex/trex) is used.
     '-c:a', 'aac', '-b:a', '64k', '-ar', String(AUDIO_SAMPLE_RATE),
     '-video_track_timescale', String(VIDEO_TIMESCALE),
     '-movflags', 'empty_moov+default_base_moof',
@@ -537,7 +565,8 @@ function generate(opts) {
     console.log(
         `Rendering video-only track (${totalDuration.toFixed(3)}s, ` +
         `${WIDTH}x${HEIGHT}@${FPS}fps, H.264 Baseline 3.0)...`);
-    renderVideoOnly(ffmpeg, videoFile, totalDuration, opts.startTime);
+    renderVideoOnly(ffmpeg, videoFile, totalDuration, opts.startTime,
+        opts.duration);
 
     console.log('Rendering audio-only track (AAC-LC 44.1kHz, beep-per-second)...');
     renderAudioOnly(ffmpeg, audioFile, totalDuration, opts.startTime);
@@ -648,12 +677,23 @@ function generate(opts) {
       const bjsnBox = buildBjsnBox(bjsnJson);
 
       const mediaParts = buckets[i].map((f) => f.bytes);
-      const parts = i === 0 ?
+
+      // EVERY segment is self-initialising: ftyp + moov + bjsn + styp +
+      // fragments, identical in structure to the first.  This is the whole
+      // point of the format -- the customer spec (V2.0, 16 May) states that
+      // media_first.mp4 and media_segment.mp4 are "now identical in content",
+      // which is what lets a CDN hand any cached segment to a cold-starting
+      // client (the abr_pts mechanism) without stitching an init segment.
+      // Confirmed by the customer 2026-07-29.
+      //
+      // Box order mirrors the real capture: bjsn sits AFTER moov, not before.
+      const parts = opts.initEverySegment ?
         [ftypMoov, bjsnBox, STYP_BOX, ...mediaParts] :
-        // Subsequent segments carrying their own bjsn box is THIS SCRIPT'S
-        // ASSUMPTION, not something observed in real traffic -- we only
-        // have the initial segment to go on. See report.
-        [STYP_BOX, bjsnBox, ...mediaParts];
+        // Legacy shape, kept only for A/B testing a player against
+        // init-once delivery.  Not what real traffic looks like.
+        (i === 0 ?
+          [ftypMoov, bjsnBox, STYP_BOX, ...mediaParts] :
+          [STYP_BOX, bjsnBox, ...mediaParts]);
 
       const outBuf = Buffer.concat(parts);
       fs.writeFileSync(filePath, outBuf);
@@ -788,6 +828,8 @@ function verify(dir) {
 
   let initialFile = null;
   let timescales = null;
+  const selfInitFiles = [];
+  const mediaOnlyFiles = [];
   const perFileMoofs = {};
   const trafCountHistogram = {};
   let allSingleTraf = true;
@@ -804,15 +846,25 @@ function verify(dir) {
     const moofCount = boxes.filter((b) => b.type === 'moof').length;
     const mdatCount = boxes.filter((b) => b.type === 'mdat').length;
 
+    // Real BJSN makes every segment self-initialising, so ftyp+moov in every
+    // file is correct, not a duplicate to flag.  --init-once produces the
+    // legacy shape, so accept either -- but require the set to be internally
+    // consistent: all self-initialising, or only the first one.
     if (hasFtyp && hasMoov) {
-      if (initialFile) {
-        errors.push(`Multiple files have ftyp+moov: ${initialFile} and ${name}`);
+      selfInitFiles.push(name);
+      if (!initialFile) {
+        initialFile = name;
+        const moov = boxes.find((b) => b.type === 'moov');
+        timescales = readTimescales(buf, moov);
       }
-      initialFile = name;
-      const moov = boxes.find((b) => b.type === 'moov');
-      timescales = readTimescales(buf, moov);
     } else if (hasFtyp || hasMoov) {
       errors.push(`${name}: has exactly one of ftyp/moov (should have both or neither)`);
+    } else {
+      mediaOnlyFiles.push(name);
+    }
+    if (!hasBjsn) {
+      // The customer spec requires the metadata in EVERY segment.
+      errors.push(`${name}: no bjsn box (every segment must carry one)`);
     }
 
     const moofs = readMoofs(buf);
@@ -839,9 +891,23 @@ function verify(dir) {
         `bjsn=${hasBjsn} moof=${moofCount} mdat=${mdatCount}`);
   }
 
-  console.log(`\n[1] Initial file: ${initialFile}`);
-  console.log(`    Subsequent files without ftyp/moov: ` +
-      `${files.filter((f) => f !== initialFile).length} / ${files.length - 1} expected`);
+  const shape = mediaOnlyFiles.length === 0 ? 'init-every-segment' :
+      (selfInitFiles.length === 1 ? 'init-once (legacy)' : 'MIXED');
+  console.log(`\n[1] Delivery shape: ${shape}`);
+  console.log(`    Self-initialising (ftyp+moov+bjsn): ` +
+      `${selfInitFiles.length}/${files.length}`);
+  console.log(`    Media-only (no ftyp/moov): ` +
+      `${mediaOnlyFiles.length}/${files.length}`);
+  if (shape === 'MIXED') {
+    errors.push(
+        `Inconsistent set: ${selfInitFiles.length} files carry ftyp+moov and ` +
+        `${mediaOnlyFiles.length} do not. Expected either all (real traffic) ` +
+        `or exactly the first (--init-once).`);
+  }
+  if (shape === 'init-every-segment') {
+    console.log('    → matches real BJSN traffic: any segment can start ' +
+        'playback cold.');
+  }
 
   console.log(`\n[2] trafCount distribution across all moofs: ` +
       JSON.stringify(trafCountHistogram));

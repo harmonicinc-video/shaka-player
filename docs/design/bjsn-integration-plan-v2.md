@@ -135,12 +135,20 @@ stay order-agnostic and simply wait until it has both.
 **Subsequent files**: `template_path.replace('${num}', seq_num + 1)` resolved
 against the initial URL.
 
-⚠️ **Their layout is an open question, and the customer spec contradicts what we
-assumed.** We inferred "same layout minus `ftyp`/`moov`" from the one initial
-segment we have — we have never captured a subsequent one. The customer spec
-(§2b) says every segment carries the metadata and that the two kinds are "now
-identical in content", which implies subsequent segments **do** carry
-`ftyp`+`moov`. See §2b for why this matters and how to settle it.
+**Every segment is identical in structure to the first** — `ftyp` + `moov` +
+`bjsn` + `styp` + fragments. Confirmed by the customer 2026-07-29, and consistent
+with the spec's "now identical in content" (§2b). There is no such thing as a
+media-only BJSN segment: any segment can start playback cold, which is what lets
+the CDN hand a starting client whichever segment `abr_pts` selects.
+
+Consequences for the integration:
+
+- **Every segment carries init.** The parser must tolerate `moov` arriving
+  repeatedly and skip redundant init appends rather than re-initialising the
+  SourceBuffer on each segment.
+- **Each segment begins with an IDR.** It must, or it could not decode cold. Our
+  own generator got this wrong at first (see §2b) — worth remembering when
+  diagnosing a stall that looks like a timeline bug but is a missing keyframe.
 
 **What the working player does with it** (`ProgressiveMp4Parser`):
 - parses box-by-box as bytes arrive; fires `bjsn` as soon as that box completes,
@@ -191,7 +199,12 @@ The `bjsn` box is exactly as we have it: 4-byte size, `'bjsn'`, then JSON with
   `suffix_new/segment_N+1` in the spec — consistent with the knowledge base's
   "replace the component after the last dash".
 
-### New — requirements we had documented nowhere
+### New to *this plan* — though the knowledge base already had most of them
+
+Credit where due: `bjsn-knowledge-base.md` already documented the
+`Last-Segment-Duration` header, the `Range: bytes=0-0` pre-warm, the
+`Old-Gear-Path` fallback and per-gear DRM, under "Gear Management System" and
+"Network Integration Considerations". They were missing from *this* document.
 
 - **Per-gear DRM.** Each `gear_list` entry may carry a `drm` object
   (`{"uhd5": {"realtime_bitrate": …, "drm": {…}}}`), marked "only for drm". Our
@@ -217,36 +230,44 @@ The `bjsn` box is exactly as we have it: 4-byte size, `'bjsn'`, then JSON with
 - **QUIC CCTK congestion feedback** — explicitly deferred to a separate
   discussion in the spec. Out of scope.
 
-### ⚠️ The open question: do subsequent segments carry `ftyp` + `moov`?
+### RESOLVED: every segment carries `ftyp` + `moov`
 
-The spec says the point of the redesign is that CDNs no longer assemble
-`media_first.mp4`, because "`media_first.mp4` and `media_segment.mp4` are now
-identical in content". Read with the `abr_pts` mechanism — where the **CDN picks
-which segment to hand a starting client** — that only works if any segment can
-start playback cold, i.e. every segment carries init. The spec's own
-`template_path` example, `123-media-first-${num}.mp4`, points the same way: the
-template for *ongoing* segments is itself named "media-first".
+**Confirmed by the customer, 2026-07-29:** initial and subsequent segments are
+identical in content. Every segment is self-initialising. This matches the spec's
+own reasoning — CDNs stopped assembling `media_first.mp4` precisely because there
+is no longer anything special about it, the `abr_pts` flow needs the CDN to be
+able to hand *any* cached segment to a cold-starting client, and the spec's
+`template_path` example is itself `123-media-first-${num}.mp4`.
 
-Against that: the one real file we hold is a single initial segment, so we have
-measured nothing about subsequent ones, and our synthetic set was generated on
-the opposite assumption (no `ftyp`/`moov` after the first file).
+What changed as a result:
 
-Why it matters:
+- `tools/bjsn-make-test-asset.js` now emits `ftyp`+`moov`+`bjsn`+`styp`+fragments
+  in **every** segment (the default; `--init-once` keeps the old shape only for
+  A/B testing a player against init-once delivery).
+- `test/test/assets/bjsn/media_11905..11909.mp4` regenerated. All five are now
+  self-initialising and verified to decode standalone.
+- The "initial vs subsequent" distinction largely collapses. Real traffic has one
+  kind of segment. `tools/bjsn-stripper-cli.js` keeps the distinction because it
+  is still useful when handed an arbitrary file, but it should report every real
+  BJSN segment as "initial".
 
-- If every segment is self-initializing, the Shaka side gets *simpler* — no
-  `InitSegmentReference` juggling — but must tolerate `moov` arriving repeatedly
-  and skip redundant init appends rather than re-initialising the SourceBuffer.
-- **`test/test/assets/bjsn/media_11906..11909.mp4` may be structurally wrong.**
-  `tools/bjsn-make-test-asset.js` would need a flag to emit init in every
-  segment, and the fixtures regenerating.
-- §2's "same layout minus `ftyp`/`moov`" is probably wrong, and
-  `tools/bjsn-stripper-cli.js`'s "initial vs subsequent" distinction may collapse
-  into a single kind.
+**A trap this exposed, worth carrying into the integration.** Making every
+segment carry `moov` is necessary but *not sufficient* for cold start: each
+segment must also **begin with an IDR keyframe**. The first regeneration attempt
+satisfied the box structure and passed structural verification, yet segments 2–5
+still could not decode — `ffprobe` reported "Missing reference picture" and zero
+video frames, because the encoder had placed a single keyframe at the start of the
+whole timeline (`-g 9999`) so every later segment began mid-GOP. Audio was
+unaffected, every AAC frame being independently decodable, which is exactly what
+makes this failure easy to miss.
 
-**How to settle it:** capture one real subsequent segment — the cheapest possible
-evidence — and run
-`node tools/bjsn-stripper-cli.js --info <file>`. Do this before Phase 4/5. Do not
-resolve it by inference; the two readings lead to different code.
+Two lessons:
+
+1. Structural validation is not decode validation. The verifier now runs
+   alongside a standalone-decode check per segment.
+2. When a BJSN stall looks like a timeline bug, check for a keyframe at the
+   segment start first. The real capture corroborates that real content does this:
+   its first video `mdat` is 7448 B against ~1.4–2.3 kB for the rest.
 
 ## 3. Target architecture
 

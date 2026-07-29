@@ -30,14 +30,21 @@
 > - the precise `abr_pts` "initial request only" rule (the spec describes the
 >   mechanism, not the client's exact request pattern)
 > - the exact base-URL rewrite for a gear switch
-> - **whether subsequent segments also carry `ftyp` + `moov`.** The spec implies
->   they do; our fixtures assume they do not. Plan §2b explains why this is the
->   single most consequential open question, and how to settle it cheaply.
 >
-> The spec also adds requirements absent from this document entirely: per-gear
-> `drm` in `gear_list`, the `Last-Segment-Duration` response header, `Range:
-> bytes=0-0` prefetch pre-warm, and the `Old-Gear-Path` / `Abr-Downgrade` fallback
-> handshake. See plan §2b — it is the current summary, not this file.
+> **Also resolved (2026-07-29):** every segment carries `ftyp` + `moov` and begins
+> with an IDR, so any segment starts playback cold. Plan §2b has the detail and
+> the keyframe trap it exposed.
+>
+> **Corroborated by the spec, and to this document's credit already here:**
+> per-gear `drm` in `gear_list`, the `Last-Segment-Duration` response header,
+> `Range: bytes=0-0` prefetch pre-warm, and the `Old-Gear-Path` fallback
+> handshake — see "Gear Management System" and "Network Integration
+> Considerations" below. These were missing from the plan, not from this file, and
+> plan §2b now carries them too.
+>
+> One naming discrepancy to resolve against real traffic: this document reads the
+> downgrade signal as `AbrDowngrade`, while the spec writes `Abr-Downgrade: 1`.
+> Prefer the spec's spelling, and match case-insensitively.
 >
 > Treat every "Gear Management" and ABR section below as design intent for a later
 > phase, not as settled fact.
@@ -109,7 +116,9 @@ Initial segment (the URL the user loads):
 ├── mdat  (audio data)
 └── ... 116 moof/mdat pairs total: 30 video, 86 audio, interleaved ~1 video : 3 audio
 
-Subsequent segments: styp (+ bjsn?) + fragments. No ftyp, no moov.
+Every subsequent segment: IDENTICAL structure — ftyp + moov + bjsn + styp +
+fragments, beginning with an IDR keyframe (customer-confirmed 2026-07-29).
+There is no media-only BJSN segment; any segment starts playback cold.
 ```
 
 Each `moof` carries **exactly one** `traf`, so a fragment belongs to a single
