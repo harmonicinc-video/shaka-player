@@ -1,5 +1,32 @@
 # BJSN Support Implementation Specification
 
+> ## ⚠️ v1-era document — read `bjsn-integration-plan-v2.md` first
+>
+> Still the best statement of **what we are trying to achieve** and of the
+> multi-phase ABR ambition. It is **not** a valid implementation guide: it was
+> written before any BJSN file had been measured, and before the v1 attempt
+> failed. Where it disagrees with `bjsn-integration-plan-v2.md`, the plan wins.
+>
+> Specifically superseded:
+>
+> - **Box order** (§ "CMAF Segment Structure"): `bjsn` follows `moov`, it does
+>   not precede it, and a `styp` box sits between `moov` and the first `moof`.
+>   Corrected in place below.
+> - **File structure** (§ "File Structure"): the `gear_manager.js`,
+>   `bjsn_abr_manager.js` and `bjsn_networking_engine.js` layout belongs to the
+>   ABR phases. The component set for the work actually in progress is plan §3.2,
+>   which is much smaller — the Phase 1 spike removed the need for a transmuxer
+>   plugin and for per-track init synthesis.
+> - **Integration approach**: this document implies patching core pipeline
+>   classes. v2's central invariant is **zero diff to `lib/`**, achieved through
+>   `registerParserByMime`, `SegmentReference.setSegmentData` and (if ever needed)
+>   `registerTransmuxer`. Plan §1 explains why v1 failed doing it the other way.
+>
+> The "Phase 1/2/3" numbering here (single gear → manual gear switching → ABR) is
+> **not** the same as the plan's Phase 0–7 numbering. This document's Phase 1
+> roughly corresponds to the plan's Phases 2–6; its Phases 2 and 3 are the plan's
+> Phase 7.
+
 ## Project Overview
 
 **Objective**: Integrate BJSN (Bytedance JSON) box parsing into Shaka Player to support TikTok's CMAF CDN distribution architecture without MPD dependency.
@@ -35,17 +62,27 @@ Box Structure:
 
 ### CMAF Segment Structure
 
+Corrected against the real capture
+(`test/test/assets/bjsn-initial-segment.mp4`). The original diagram placed the
+BJSN box before `moov` and omitted `styp`.
+
 ```
-Segment Structure:
-├── ftyp box (file type)
-├── BJSN box (Bytedance JSON metadata)
-├── moov box (movie metadata - optional)
-├── moof box (video fragment header)
+Initial segment:
+├── ftyp box (24 B)
+├── moov box (1080 B — vide track 1 + soun track 2, both timescale 1000)
+├── BJSN box (433 B at offset 1104 — AFTER moov)
+├── styp box (24 B — must be preserved)
+├── moof box (exactly one traf; track 1 = video)
 ├── mdat box (video fragment data)
-├── moof box (audio fragment header)
+├── moof box (exactly one traf; track 2 = audio)
 ├── mdat box (audio fragment data)
-└── ... (continued interleaved pattern)
+└── ... (116 pairs: 30 video, 86 audio, interleaved ~1:3)
+
+Subsequent segments: styp (+ BJSN) + moof/mdat pairs. No ftyp or moov.
 ```
+
+Media time does **not** start at zero: the capture's first `tfdt` is 2333176
+(2333.176 s at timescale 1000). See plan §3.4 for why this matters.
 
 ## Phase 1: Single Gear Support
 

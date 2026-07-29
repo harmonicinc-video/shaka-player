@@ -1,5 +1,36 @@
 # BJSN Implementation Knowledge Base
 
+> ## ⚠️ v1-era document — read `bjsn-integration-plan-v2.md` first
+>
+> Written before any BJSN file had been measured. It captures useful intent, but
+> several claims here are **wrong or unverified**. Where this document and
+> `bjsn-integration-plan-v2.md` disagree, the plan wins — its facts come from
+> measuring `test/test/assets/bjsn-initial-segment.mp4`.
+>
+> Known wrong:
+>
+> - **Box order.** This document says `bjsn` sits before `moov`, "early
+>   positioning for efficient parsing". Measured reality is `ftyp` (24 B) →
+>   `moov` (1080 B) → `bjsn` (433 B, offset 1104) → `styp` → fragments. There is
+>   no early-`bjsn` optimisation to exploit; a parser must be order-agnostic and
+>   simply wait until it holds both boxes. Corrected in place below.
+> - **`styp` box** between `moov` and the first `moof` is missing from every
+>   diagram here. It must be kept with the media, not filtered out.
+> - **One `moof` per track.** Not stated here. Each `moof` holds exactly one
+>   `traf`, and video/audio moofs interleave ~1:3 within a single file.
+>
+> Unverified — plausible but never observed, since only ONE real initial segment
+> has been captured and we have no URL provenance for it:
+>
+> - the `abr_pts` query parameter and its "initial request only" rule
+> - gear-name substitution "after the last dash" in the base URL
+> - `${num}` = `current_seq_num + 1` (consistent with the format, and what
+>   `tools/bjsn-make-test-asset.js` assumes, but not confirmed against traffic)
+> - whether subsequent segments carry a `bjsn` box at all
+>
+> Treat every "Gear Management" and ABR section as design intent for a later
+> phase, not as settled fact.
+
 ## Overview
 
 This document captures additional technical insights, clarifications, and implementation details discovered during the BJSN specification development process. It serves as a companion to the main specification document.
@@ -52,19 +83,28 @@ GET /stream-A-hd5/media_seg_12.mp4
 
 **Enhanced Understanding**: Segments contain interleaved video/audio fragments to minimize startup latency.
 
+Corrected against `test/test/assets/bjsn-initial-segment.mp4`. The original
+diagram here placed `bjsn` before `moov` and omitted `styp`; both were wrong.
+
 ```
-Segment Structure:
-├── ftyp box
-├── BJSN box (early positioning for efficient parsing)
-├── moov box (optional)
-├── moof box (video fragment)
-├── mdat box (video data)
-├── moof box (audio fragment)
-├── mdat box (audio data)
-└── ... (continued interleaving)
+Initial segment (the URL the user loads):
+├── ftyp  (24 B)
+├── moov  (1080 B — two trak: vide id=1, soun id=2, both timescale 1000)
+├── bjsn  (433 B at offset 1104 — AFTER moov, not before)
+├── styp  (24 B — keep this; do not filter it out)
+├── moof  (one traf only, track 1, tfdt 2333176)
+├── mdat  (video data)
+├── moof  (one traf only, track 2, tfdt 2333186)
+├── mdat  (audio data)
+└── ... 116 moof/mdat pairs total: 30 video, 86 audio, interleaved ~1 video : 3 audio
+
+Subsequent segments: styp (+ bjsn?) + fragments. No ftyp, no moov.
 ```
 
-**Implementation Impact**: Stream-based parsing required to handle progressive fragment loading without waiting for complete segment download.
+Each `moof` carries **exactly one** `traf`, so a fragment belongs to a single
+track and is routed by its `tfhd.track_ID`.
+
+**Implementation Impact**: Stream-based parsing required to handle progressive fragment loading without waiting for complete segment download. Because `bjsn` follows `moov`, a progressive parser gains no benefit from expecting `bjsn` early — it must be box-type driven and wait until it holds both.
 
 ## Stream-Based Parsing Requirements
 

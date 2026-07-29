@@ -119,7 +119,7 @@ anywhere via the URL field or a `?url=` query parameter, so a run is shareable
 and reproducible:
 
 ```
-/demo/bjsn/spike-muxed-buffer.html?url=/testdata/bjsn/generated/media_11905.mp4
+/demo/bjsn/spike-muxed-buffer.html?url=/test/test/assets/bjsn/media_11905.mp4
 ```
 
 It must be an **initial** segment (one containing `moov`); subsequent segments
@@ -141,7 +141,7 @@ read rather than assumed.
 `tools/bjsn-stripper-cli.js` reads and strips `bjsn` boxes offline:
 
 ```bash
-node tools/bjsn-stripper-cli.js --info testdata/bjsn/media_first.mp4
+node tools/bjsn-stripper-cli.js --info test/test/assets/bjsn-initial-segment.mp4
 ```
 
 See [`tools/README.md`](../../tools/README.md).

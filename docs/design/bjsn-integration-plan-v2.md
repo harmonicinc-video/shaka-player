@@ -1,8 +1,89 @@
 # BJSN → Shaka Player Integration Plan (v2, restart)
 
-Status: proposal. Supersedes `bjsn-phase1-implementation-plan.md` for everything
-under `lib/`. The spec (`bjsn-support-spec.md`) and knowledge base
-(`bjsn-knowledge-base.md`) remain valid as requirements documents.
+**This document is the authority for the v2 integration.**
+
+It supersedes v1's `bjsn-phase1-implementation-plan.md`, which was deliberately
+**not** carried onto this branch — it survives only on `feature/bjsn-phase1` if
+you need the history. `bjsn-support-spec.md` and `bjsn-knowledge-base.md` are
+v1-era documents that still describe the *goal* well but contain claims since
+measured to be wrong; each carries a banner listing them. Where they conflict
+with the measurements here, this document wins.
+
+### Housekeeping for the next doc pass
+
+These three BJSN documents sit loose in `docs/design/`, but upstream Shaka sorts
+designs into `docs/design/current/` (how shipped things work),
+`future_work/` (proposals) and `outdated/` (superseded). All three BJSN docs
+describe unshipped work, so `future_work/` is where they belong. Deliberately
+**not** moved yet, because relocating them invalidates path references in:
+
+- `demo/bjsn/README.md` (links to this plan)
+- `tools/README.md`
+- the banners in the other two BJSN docs, which name each other
+- the internal cross-references in this file
+
+Move all three together and fix those references in the same commit, or not at
+all. A stale link is worse than an unconventional location.
+
+## 0. Current status — start here
+
+Branch `feature/bjsn-v2`, cut from `origin/main` at `9313a466d`
+(`v4.15.6-main-6`). **Zero diff to `lib/`** — that is the central invariant of
+this restart (see §1 and §3); check it before and after any change:
+
+```bash
+git diff origin/main --stat -- lib/   # must print nothing
+```
+
+Toolchain — **verified on this machine, 2026-07-29.** Do not reach for the usual
+npm scripts: there is no `npm test` and no `npm run lint`, and `npm run build`
+**fails here** because it shells out to `python`, which is not on PATH (only
+`python3` is). Call the Python entry points directly:
+
+```bash
+python3 build/all.py                   # build  (NOT `npm run build` — see above)
+python3 build/test.py --filter bjsn    # karma tests; --help for options
+python3 build/check.py                 # Closure completeness + type check + lint
+npx eslint demo/ lib/ test/            # linter alone
+python3 -m http.server 8080            # serve repo root for demo/bjsn/ pages
+```
+
+If you would rather type `npm run build`, fix `package.json` to say `python3` —
+but that is a change to a shared file, so decide deliberately rather than as a
+drive-by.
+
+`demo/bjsn/*.js` and `tools/*.js` are excluded from eslint in
+`eslint.config.mjs` — they use syntax newer than the repo's `ecmaVersion: 2017`
+and the CLI tools are Node, not browser, code. Anything ported into `lib/` gets
+full lint coverage and must satisfy it.
+
+Done:
+
+- **Phase 0 — cleanup.** §5. Branch cut clean; only the proven reference player,
+  tooling and docs carried across. No v1 core patches exist on this branch.
+- **Phase 1 — spike.** §3.1. **Option A chosen**: a single SourceBuffer declaring
+  both codecs decodes both tracks of an interleaved BJSN file. No demux, no
+  transmuxer plugin, no per-track init synthesis.
+
+What exists to build on:
+
+| Thing | Where |
+| --- | --- |
+| Working standalone MSE player (the behavioural contract, §2) | `demo/bjsn/bjsn_player.html` + `bjsn_utils.js` + `bjsn_mse.js` |
+| Architecture spike harness, takes any segment by `?url=` | `demo/bjsn/spike-muxed-buffer.html` |
+| Real captured initial segment (77 KB) | `test/test/assets/bjsn-initial-segment.mp4` |
+| Synthetic 5-segment set, seamless `tfdt` across files | `test/test/assets/bjsn/media_11905..11909.mp4` |
+| Generator for longer/other runs | `tools/bjsn-make-test-asset.js` |
+| Segment inspector / `bjsn` stripper | `tools/bjsn-stripper-cli.js` |
+| Fixture provenance, quirks, how to run things | `demo/bjsn/README.md`, `tools/README.md` |
+
+**Next: Phase 2** (§6) — port `bjsn_utils.js` into `lib/util/` as Closure modules
+with unit tests, then repoint `demo/bjsn/` at them so the reference player and the
+library cannot drift.
+
+⚠️ **Three decisions in §8 are still unanswered and gate Phase 2** — most
+importantly whether ABR must land this round, since that determines whether
+Option A is even eligible. Resolve them before writing `lib/` code.
 
 ## 1. Why v1 did not work
 
@@ -23,8 +104,8 @@ When playback failed there was no boundary at which to assert correctness.
 
 The deeper cause is a structural mismatch that v1 never resolved explicitly:
 
-> One BJSN HTTP response contains **ftyp + bjsn + moov + N interleaved
-> (moof+mdat) pairs for two tracks**. Shaka's pipeline assumes one HTTP response
+> One BJSN HTTP response contains **ftyp + moov + bjsn + styp + N interleaved
+> (moof+mdat) pairs for two tracks**, one `traf` per `moof`. Shaka's pipeline assumes one HTTP response
 > → one contentType → one SourceBuffer, with the init segment addressed
 > separately.
 
@@ -37,8 +118,8 @@ designed seam.
 observed behaviour of that player and is treated as the requirement set. Any v2
 component that disagrees with this list is wrong.
 
-**Initial file** (the URL the user loads). Box order as observed in
-`testdata/bjsn/media_first.mp4`:
+**Initial file** (the URL the user loads). Box order as measured in
+`test/test/assets/bjsn-initial-segment.mp4`:
 1. `ftyp` (24 bytes)
 2. `moov` (1080 bytes) — two `trak`s (`vide` + `soun`), each with its own
    timescale
@@ -276,10 +357,11 @@ knowledge lives — but never merge it.
 stash `WIP bjsn_mse/bjsn_utils (untested, superseded by bjsn-v2 plan)` if ever
 needed.
 
-## 5. Phase 0 — cleanup
+## 5. Phase 0 — cleanup — **DONE (2026-07-28)**
 
-Do this on the new branch (or on `feature/bjsn-phase1` before branching, if you
-prefer the history there).
+Kept as a record of what was removed and why. Because the branch was cut fresh
+from `origin/main`, every deletion below happened by simply not carrying the file
+across — there is no deletion commit to review.
 
 **Keep, relocated to `demo/bjsn/`** (root-level HTML/JS will never be
 upstreamable, and it keeps the reference harness obviously separate from the
@@ -340,14 +422,30 @@ new fixtures or a new browser.
 
 **Phase 2 — Shared BJSN core in `lib/util/`** (~2 days)
 Port `bjsn_utils.js` into the files listed in §3.2, as `goog.provide`d Closure
-classes with proper type annotations. Unit tests per module using the captured
-fixtures: box walk, `bjsn` schema, per-track init synthesis (byte-compare
-against the standalone player's output), codec detection, progressive parse with
-adversarial chunk boundaries (split mid-header, mid-`mdat`, 1-byte chunks).
-Then **point `demo/bjsn/` at the new modules** so the reference player and the
-library share one implementation and cannot drift.
-*Exit:* `npm run build && npm test` green; `bjsn_player.html` still plays, now
-running on `lib/util/` code.
+classes with proper type annotations. Unit tests per module against the committed
+fixtures (`test/test/assets/bjsn-initial-segment.mp4` for the real shape,
+`test/test/assets/bjsn/` for multi-segment continuity):
+
+- box walk, including the `styp` box and 64-bit box sizes
+- `bjsn` extraction and schema validation
+- codec detection → `avc1.42E01E` / `mp4a.40.2`, plus the `hvc1`↔`hev1` fallback
+- per-track timescale reading — the fixtures deliberately differ here (real: 1000
+  and 1000; synthetic: 1000 and 44100), so a test that assumes one value fails
+- progressive parse with adversarial chunk boundaries: split mid-header,
+  mid-`mdat`, and 1-byte chunks
+
+Then **point `demo/bjsn/` at the new modules** for the shared parts, so the
+reference player and the library cannot drift. Note the demo keeps its own
+`filterMoovForTrack` — Option A means the library does not need per-track init
+synthesis (§3.2), so that one function stays demo-only rather than being ported.
+
+*Exit:* `python3 build/all.py` green; `python3 build/test.py --filter bjsn` green;
+`demo/bjsn/bjsn_player.html` still plays, now running on `lib/util/` code.
+
+> There is **no `npm test` script** in this repo — the runner is
+> `python3 build/test.py` (`--help` for options; `--filter` selects specs,
+> `--browsers Chrome`, `--no-build` to skip rebuilding). Note `python3`, not
+> `python`, which is not on PATH here.
 
 **Phase 3 — Manifest parser, first frame** (~3 days)
 `BjsnManifestParser` registered by mime type; treat the stream as static/single
@@ -372,8 +470,9 @@ first byte / `bjsn` parsed / init appended / first media append / `playing`, for
 Shaka vs standalone on the same asset. Then enable `lowLatencyMode` so
 `streaming_engine`'s existing chunked-append path (`streaming_engine.js:1912`)
 gives Shaka the same progressive behaviour the standalone player gets for free.
-*Exit:* Shaka's time-to-playing within ~15% of the standalone player;
-`npm run lint`, `build`, `test` green.
+*Exit:* Shaka's time-to-playing within ~15% of the standalone player, and the
+repo's own gates green: `python3 build/check.py` (Closure completeness, test type
+checks, linter), `python3 build/all.py`, `python3 build/test.py`.
 
 **Phase 7 — ABR / gear switching.** Out of scope for this round. Option A must
 be revisited before this starts (see §3.1); expect to move to Option B or to
@@ -404,10 +503,19 @@ deliberate one-way-ish door for multi-gear.
 
 ## 8. Decisions needed before Phase 2
 
+Still open — both should be settled before any `lib/` code is written:
+
 1. **Scope this round:** single gear only (recommended), or must ABR land too?
-   This determines whether Option A is even eligible.
+   Phase 1 chose Option A (single muxed SourceBuffer) on the assumption of single
+   gear. Option A cannot do per-track ABR, so if ABR is in scope for *this* round,
+   §3.1 must be reopened and the Option B / demux route taken instead. Answering
+   this late is expensive; answering it now is free.
 2. **Upstream intent:** is zero-core-diff a hard requirement (eventual upstream
    PR / easy rebase onto `main`), or is a maintained fork acceptable? v2 assumes
    the former; relaxing it makes Phase 3–5 noticeably cheaper.
-3. **Does the standalone player stay?** v2 assumes yes, as the reference
-   implementation and A/B baseline, sharing `lib/util/` code from Phase 2 on.
+
+Settled:
+
+3. ~~**Does the standalone player stay?**~~ **Yes.** It lives at `demo/bjsn/` and
+   §2 treats its behaviour as the contract the integration must match. Phase 2
+   repoints it at the new `lib/util/` modules so the two cannot drift.
