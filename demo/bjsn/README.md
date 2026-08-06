@@ -133,7 +133,10 @@ Startup marks from a representative run: source open 16 ms, first byte 38 ms,
 resolved 101 ms, init append 112 ms, first media append 147 ms, `canplay`
 118–148 ms, playing 191 ms.
 
-### Two things this prototype got wrong first, worth not repeating
+### Three things this prototype got wrong first, worth not repeating
+
+All three are Shaka defaults that fight the shape of a BJSN manifest, and all
+three look like something other than what they are.
 
 - **Shaka starts a live stream at the live edge.** At manifest time the index
   holds exactly one reference, so the live edge *is* that segment's end — and
@@ -150,6 +153,21 @@ resolved 101 ms, init append 112 ms, first media append 147 ms, `canplay`
   **one** unconfirmed reference outstanding, gated on the `seq_num` read from the
   in-band `bjsn` box, and anchors each new reference to the *real* media end time
   of the segment that arrived rather than accumulating duration estimates.
+- **Segment prefetch must be switched off, or every segment downloads twice.**
+  `streaming.segmentPrefetchLimit` defaults to **1**. `SegmentPrefetch` builds its
+  `SegmentIterator` once and ignores the `currTime` of every later call
+  (`segment_prefetch.js:90–93`), and `SegmentIterator.next()` advances its position
+  even when it runs off the end of the index (`segment_index.js:658`). Since the
+  gate above means the next reference often does not exist yet, the post-append
+  prefetch call comes back empty *and still advances* — after which the iterator
+  is permanently one behind and nothing re-syncs it. The prefetcher then fetches a
+  segment that was already appended, that stale entry fills the single prefetch
+  slot, and the lookup for the segment actually needed misses, so Shaka downloads
+  it separately. Measured 2026-08-04: `media_11907` and `media_11908` each fetched
+  twice, one segment out of step. Fixed with `segmentPrefetchLimit: 0`, which is
+  also what makes the startup metrics comparable — the standalone player has no
+  prefetch either. Nothing is lost: segments do not exist until the origin
+  publishes them, so there was never anything useful to fetch ahead.
 
 ### The timing probe
 

@@ -971,6 +971,23 @@
         player.configure({
           streaming: {
             lowLatencyMode: lowLatencyBox.checked,
+            // Off, or every segment is downloaded twice.
+            //
+            // SegmentPrefetch caches the SegmentIterator it builds on its first
+            // call and ignores the `currTime` of every later one, and
+            // SegmentIterator.next() advances its position even when it runs
+            // off the end of the index.  A BJSN index grows one reference at a
+            // time, published *after* the prefetcher has already run past the
+            // end (see addNextReference_'s gate), so the iterator desynchronises
+            // from the playhead and never re-syncs: the prefetcher fetches a
+            // segment that was already appended, that stale entry occupies the
+            // single prefetch slot, and getPrefetchedSegment() misses for the
+            // segment actually needed -- which StreamingEngine then downloads
+            // itself.  One wasted download plus one real one, every segment.
+            //
+            // The standalone player has no prefetch either, so this is also the
+            // right setting for the startup-metric parity this page is for.
+            segmentPrefetchLimit: 0,
             // A BJSN 404 on the next segment is normal (not yet published), so
             // let Shaka's own retry handle it rather than failing the load.
             retryParameters: {

@@ -671,7 +671,7 @@ call (`presentation_timeline.js:327–333`), which lands the live edge exactly o
 the end of the last known segment — in BJSN's media-clock coordinates, with no
 arithmetic of our own.
 
-**Two failure modes the prototype hit, both of which Phase 3/5 must handle:**
+**Three failure modes the prototype hit, all of which Phase 3/5 must handle:**
 
 1. **Shaka starts a live stream at the live edge, so it skipped the first
    segment.** At manifest time the index holds one reference, so the live edge
@@ -693,6 +693,32 @@ arithmetic of our own.
    and anchors each new reference to the real media end time of the segment that
    arrived rather than accumulating duration estimates (which also removes the
    drift Phase 4 would otherwise have to chase).
+3. **`segmentPrefetchLimit` defaults to 1, and against a lazily-grown index that
+   downloads every segment twice.** `SegmentPrefetch` builds its `SegmentIterator`
+   on its first call and *ignores the `currTime` of every later one*
+   (`segment_prefetch.js:90–93`), while `SegmentIterator.next()` increments its
+   position even when it runs off the end of the index
+   (`segment_index.js:658`). Because a BJSN index grows one reference at a time,
+   published only after the previous segment has arrived (failure mode 2's gate),
+   the post-append prefetch call at `streaming_engine.js:1913` fires when the next
+   reference does not exist yet: `next()` returns nothing but still advances. The
+   iterator is then permanently out of step with the playhead and nothing
+   re-syncs it — the prefetcher fetches a segment that was already appended, that
+   stale entry occupies the single prefetch slot, `getPrefetchedSegment()` misses
+   for the segment actually needed, and `StreamingEngine` downloads it itself.
+   **One wasted download plus one real one, for every segment.** Measured
+   2026-08-04: `media_11907`/`11908` each fetched twice, one segment out of step.
+   `evict()` compounds it — it drops entries only when `time > ref.endTime`, and
+   consecutive BJSN references slightly *overlap* (a reference ends at
+   `startTime + segmentDuration_` ≈ 2.000 s while the next starts at the real
+   `tfdt`-derived end ≈ 1.980 s later), so the stale entry survives an extra round.
+   The prototype sets `streaming.segmentPrefetchLimit = 0`, which is also correct
+   for §6 metric parity — the standalone player has no prefetch either, and
+   segments do not exist until the origin publishes them, so there is nothing
+   genuinely useful to fetch ahead. **Phase 3 cannot rely on the default**, and
+   the underlying behaviour is arguably an upstream bug: any parser that appends
+   references lazily hits it, and the fix is for `prefetchSegmentsByTime()` to
+   re-seek when `currTime` disagrees with the iterator's position.
 
 **Caveats.** This is demo-level plain JS, not Closure modules, and it is not a
 substitute for Phase 2/3: no unit tests, no lint coverage, single gear, no DRM,
