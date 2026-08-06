@@ -631,7 +631,10 @@ never plays", the failure mode v1 hit.
 - 404 on the next segment is normal (not yet published): rely on Shaka's
   `streaming.retryParameters` + `failureCallback` rather than porting
   `SegmentDownloadManager`. Only port the custom backoff if Shaka's retry proves
-  insufficient.
+  insufficient. **Resolved 2026-08-06: it did prove insufficient, and the
+  backoff was ported.** Shaka's `retryParameters` cover the fetch, but its
+  *default* `failureCallback` gives up outright on a static stream, so the
+  prototype supplies its own. See §3.6.
 
 ### 3.6 Prototype result (2026-07-29): Option A works in Shaka, no core diff
 
@@ -719,6 +722,51 @@ arithmetic of our own.
    the underlying behaviour is arguably an upstream bug: any parser that appends
    references lazily hits it, and the fix is for `prefetchSegmentsByTime()` to
    re-seek when `currTime` disagrees with the iterator's position.
+
+**Failed downloads: §3.5's bet was wrong, and `SegmentDownloadManager` had to be
+ported after all (2026-08-06).** Shaka's `retryParameters` do handle the *fetch*,
+but its default `failureCallback` (`defaultStreamingFailureCallback_`,
+lib/player.js) is not enough on two counts:
+
+- it opens with `if (!this.isLive()) return;`, so **every download failure on a
+  static stream is fatal**. A BJSN 404 is just as normal there — the capture has
+  simply not reached that segment — and the standalone player draws no such
+  distinction;
+- it retries on a flat 1 s, where `SegmentDownloadManager` retries at 100 ms and
+  only backs off once a failure looks persistent.
+
+The prototype therefore supplies its own `streaming.failureCallback` carrying
+`SegmentDownloadManager`'s policy verbatim: 100 ms per retry, exponential backoff
+past 10 consecutive failures, 5 s ceiling, never fatal, counter reset by the
+in-band segment response the parser already sees. RECOVERING is deliberately not
+ported — it only spaces out the *next* fetch, which under Shaka belongs to
+StreamingEngine. Measured over a permanent 404: retry 1 at 100 ms, retry 10 at
+100 ms, retry 20 at the 5 s ceiling, then `download recovered ... after 21 failed
+attempts` when the segment appeared.
+
+Two things Phase 3/5 should carry forward from this:
+
+1. **The delay handed to `retryStreaming()` is a floor, not a cadence.**
+   StreamingEngine re-fetches only when it wants more data, so with a healthy
+   buffer the observed spacing was ~2.9 s per attempt against a requested 100 ms.
+   That is better behaviour than the standalone player's unconditional 100 ms
+   hammering, but it means the two players' retry *rates* are not comparable even
+   though their policies now match.
+2. **A recoverable streaming error still reaches the `error` event as CRITICAL.**
+   `handleStreamingError_()` fires `onError` *before* calling the
+   `failureCallback` that downgrades severity, so severity cannot be used to tell
+   a transient 404 from a real fault. Consumers must classify from
+   `error.code` + the request type instead — the prototype's page does, and
+   without it a normal live 404 raises a fatal-looking banner that nothing ever
+   lowers.
+
+Not done, and blocked rather than skipped: **skipping a segment the origin never
+publishes.** `markAsUnavailable()` exists but nothing in `streaming_engine.js`
+consults `Status.UNAVAILABLE` (only `MISSING`, and only from the HLS parser), and
+`SegmentIndex` has no public single-reference removal — `evict(time)` would take
+the seek history with it. So a permanently-missing segment stalls both players
+alike, and moving past one needs either an upstream change or an eviction policy
+that gives up on seeking backwards. Phase 5 decision.
 
 **Caveats.** This is demo-level plain JS, not Closure modules, and it is not a
 substitute for Phase 2/3: no unit tests, no lint coverage, single gear, no DRM,
@@ -866,8 +914,11 @@ seeking within the buffer works; `getBufferedInfo()` agrees with
 
 **Phase 5 — Live continuation** (~3 days)
 `update()` loop, `seq_num` advance, in-band `bjsn` refresh, 404 handling via
-Shaka retry. *Exit:* 30-minute unattended live playback with no stall and no
-A/V drift; buffer health comparable to the standalone player.
+Shaka retry **plus a ported `SegmentDownloadManager` policy in
+`streaming.failureCallback`** — the default callback is fatal on static streams,
+per §3.5/§3.6. *Exit:* 30-minute unattended live playback with no stall and no
+A/V drift; buffer health comparable to the standalone player; a paused origin
+produces retries and no error banner, and playback resumes when it comes back.
 
 **Phase 6 — Parity and hardening** (~2 days)
 The measurement half of this is **already built**: `demo/bjsn/bjsn_timing_probe.js`

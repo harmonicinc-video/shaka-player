@@ -539,6 +539,192 @@
             'n/a' : `${value.toFixed(digits)}s`;
       }
 
+      // -------------------------------------------------- download failures
+
+      // Mirrors SegmentDownloadManager in bjsn_mse.js, which is the whole of
+      // the standalone player's failed-download policy: retry the *same*
+      // segment every 100 ms, and past 10 consecutive failures back off
+      // exponentially to a 5 s ceiling.  It never gives up and never lets a
+      // failure become fatal, because a BJSN 404 only ever means "not
+      // published yet" -- the origin is live and we have caught up with it.
+      //
+      // The standalone manager's third state, RECOVERING, is deliberately not
+      // ported.  It exists only to space out the *next* fetch, and under Shaka
+      // the fetch cadence belongs to StreamingEngine, so a RECOVERING state
+      // here would be a label with no behaviour behind it.
+      const RETRY_INTERVAL_MS = 100;
+      const MAX_RETRY_ATTEMPTS = 10;
+      const MAX_BACKOFF_MS = 5000;
+
+      class DownloadHealth {
+        constructor() {
+          this.reset();
+        }
+
+        reset() {
+          /** @type {string} NORMAL or RETRY. */
+          this.state = 'NORMAL';
+          this.consecutiveFailures = 0;
+          this.totalFailures = 0;
+          this.retriesIssued = 0;
+          /** @type {?Object} The most recent failure, for the panel. */
+          this.lastFailure = null;
+          // Counted from the load rather than left null, so "since last
+          // success" reads as a real number from the first tick.
+          this.lastSuccessAt = performance.now();
+        }
+
+        /**
+         * @param {!Object} info From downloadFailureInfo().
+         * @return {number} How long to wait, in ms, before retrying.
+         */
+        onFailure(info) {
+          this.consecutiveFailures++;
+          this.totalFailures++;
+          this.state = 'RETRY';
+          this.lastFailure = Object.assign({at: performance.now()}, info);
+
+          let delay = RETRY_INTERVAL_MS;
+          if (this.consecutiveFailures > MAX_RETRY_ATTEMPTS) {
+            delay = Math.min(
+                RETRY_INTERVAL_MS *
+                    Math.pow(2, this.consecutiveFailures - MAX_RETRY_ATTEMPTS),
+                MAX_BACKOFF_MS);
+          }
+          return delay;
+        }
+
+        /**
+         * A segment arrived.
+         *
+         * @return {number} The length of the run of failures this ended, or 0
+         *   if there was none -- so the caller can report recovery once rather
+         *   than on every segment.
+         */
+        onSuccess() {
+          const ended = this.state === 'RETRY' ? this.consecutiveFailures : 0;
+          this.state = 'NORMAL';
+          this.consecutiveFailures = 0;
+          this.lastSuccessAt = performance.now();
+          return ended;
+        }
+
+        /** @return {!Array<string>} Lines for the metrics panel. */
+        lines() {
+          const now = performance.now();
+          const out = [];
+          out.push(`state              ${this.state}` +
+              (this.state === 'RETRY' ?
+                  `  (${this.consecutiveFailures} consecutive)` : ''));
+          out.push(`failures           ${this.totalFailures} total, ` +
+              `${this.retriesIssued} retries issued`);
+          out.push(`since last success ${
+            secs((now - this.lastSuccessAt) / 1000, 1)}`);
+          if (this.lastFailure) {
+            const f = this.lastFailure;
+            out.push(`last failure       ${f.name} ${f.what} ` +
+                `(${secs((now - f.at) / 1000, 1)} ago)`);
+          }
+          return out;
+        }
+      }
+
+      const health = new DownloadHealth();
+
+      /**
+       * Classifies a Shaka error as a retryable download failure, or not.
+       *
+       * The code set is the same one Shaka's own
+       * `defaultStreamingFailureCallback_` retries (lib/player.js), since that
+       * is the callback we are replacing.  Anything else -- a decode error, a
+       * manifest error, an MSE error -- is a real fault and must stay fatal.
+       *
+       * @param {*} error
+       * @return {?{uri: string, name: string, what: string, requestType: *}}
+       */
+      function downloadFailureInfo(error) {
+        if (!error || !window.shaka ||
+            error.category !== shaka.util.Error.Category.NETWORK) {
+          return null;
+        }
+        const Code = shaka.util.Error.Code;
+        const data = error.data || [];
+        let what = null;
+        let requestType = null;
+        // Argument positions are per the code's doc comment in lib/util/error.js.
+        switch (error.code) {
+          case Code.BAD_HTTP_STATUS:
+            what = `HTTP ${data[1]}`;
+            requestType = data[4];
+            break;
+          case Code.HTTP_ERROR:
+            what = 'network error';
+            requestType = data[2];
+            break;
+          case Code.TIMEOUT:
+            what = 'timeout';
+            requestType = data[1];
+            break;
+          default:
+            return null;
+        }
+        const uri = String(data[0] || '');
+        return {uri, name: uri.split('/').pop() || uri, what, requestType};
+      }
+
+      /**
+       * Our `streaming.failureCallback`.  Replaces Shaka's default for two
+       * reasons:
+       *
+       *  - the default gives up immediately on a static stream
+       *    (`if (!this.isLive()) return;`), and a BJSN 404 is just as normal
+       *    there -- the capture simply has not reached that segment yet.  The
+       *    standalone player does not distinguish either;
+       *  - the default retries on a flat 1 s, where the standalone player
+       *    retries at 100 ms and only backs off once a failure looks
+       *    persistent.
+       *
+       * @param {!shaka.util.Error} error
+       */
+      function onStreamingFailure(error) {
+        const info = downloadFailureInfo(error);
+        if (!info) {
+          log('streaming failure is not a download failure, leaving it fatal', {
+            code: error.code, category: error.category,
+          });
+          return;
+        }
+
+        const delayMs = health.onFailure(info);
+        // What the API asks a retrying failureCallback to do.  Note it cannot
+        // reach the 'error' event handler: handleStreamingError_() fires that
+        // event *before* calling us, so the handler classifies the error
+        // itself rather than reading severity.
+        error.severity = shaka.util.Error.Severity.RECOVERABLE;
+
+        // Log the first failure of a run and then every tenth, the way the
+        // parser's "waiting for seq" line does.  At a 100 ms retry interval,
+        // logging every attempt would bury everything else in the pane.
+        if (health.consecutiveFailures === 1 ||
+            health.consecutiveFailures % 10 === 0) {
+          log(`download failed: ${info.name} ${info.what} — attempt ` +
+              `${health.consecutiveFailures}, retrying in ${delayMs}ms`);
+        }
+
+        if (!player) {
+          return;
+        }
+        if (player.retryStreaming(delayMs / 1000)) {
+          health.retriesIssued++;
+        } else {
+          // Only happens once streaming is unrecoverable, so say so rather
+          // than leaving the pane sitting on "Retrying" forever.
+          log('retryStreaming() refused: the streaming engine is gone or has ' +
+              'failed fatally. Playback will not resume.');
+          session.error = error;
+        }
+      }
+
       // ------------------------------------------------------ library boot
 
       function waitForShaka(timeoutMs) {
@@ -631,6 +817,13 @@
           }
         };
         BjsnShakaParser.hooks.onSegmentResponse = (uri, info) => {
+          // The one place a *successful* segment download is visible, so it is
+          // where a run of failures gets called off.
+          const ended = health.onSuccess();
+          if (ended) {
+            log(`download recovered: ${uri.split('/').pop()} arrived after ` +
+                `${ended} failed attempt${ended === 1 ? '' : 's'}`);
+          }
           log(`[parser] segment response ${uri.split('/').pop()}: ` +
               `${info.boxes.join('+')} ${info.originalBytes}B -> ` +
               `${info.strippedBytes}B (seq ${info.seqNum})`);
@@ -642,6 +835,25 @@
 
         on('error', (event) => {
           const error = event.detail;
+
+          // A failed segment download is not a fault to shout about: the next
+          // BJSN segment 404s as a matter of course until the origin publishes
+          // it, and onStreamingFailure is about to retry. Raising the red
+          // banner here would make normal operation look broken, and would then
+          // keep looking broken after recovery, since nothing lowers a banner.
+          //
+          // Severity cannot be used to tell the two cases apart:
+          // handleStreamingError_() fires this event *before* it calls the
+          // failureCallback, so a recoverable error still reads CRITICAL here.
+          // Classify from the code and request type instead.
+          const info = downloadFailureInfo(error);
+          const RequestType = shaka.net.NetworkingEngine.RequestType;
+          if (info && info.requestType === RequestType.SEGMENT) {
+            // Counted, logged and retried by onStreamingFailure; the health
+            // block in the metrics panel is where it shows up.
+            return;
+          }
+
           session.error = error;
           log('SHAKA ERROR', {
             code: error.code,
@@ -830,6 +1042,12 @@
         }
 
         lines.push('');
+        lines.push('Download health:');
+        for (const line of health.lines()) {
+          lines.push(`  ${line}`);
+        }
+
+        lines.push('');
         lines.push('Appends:');
         lines.push(`  total ${probe.counter('appends')} ` +
             `(init ${probe.counter('initAppends')}, ` +
@@ -929,9 +1147,31 @@
             .join(', ');
       }
 
+      /**
+       * The status chip, derived rather than set from event handlers, so that a
+       * run of failed downloads and the recovery from it both show up without
+       * having to remember to clear whatever the last event wrote.
+       */
+      function refreshStatus() {
+        if (!player) {
+          setStatus('Ready', false);
+        } else if (session.error) {
+          setStatus('Error', false);
+        } else if (health.state === 'RETRY') {
+          setStatus(`Retrying (${health.consecutiveFailures})`, true);
+        } else if (!video.paused) {
+          setStatus('Playing', true);
+        } else if (probe.get('playing') !== null) {
+          setStatus('Paused', false);
+        } else {
+          setStatus('Loading', true);
+        }
+      }
+
       function startUiTimer() {
         stopUiTimer();
         uiTimer = setInterval(() => {
+          refreshStatus();
           renderMetrics();
           renderTimeline();
         }, 250);
@@ -949,6 +1189,7 @@
       async function loadStream(uri) {
         hideBanner();
         session = newSession();
+        health.reset();
         logElement.textContent = '';
 
         if (player) {
@@ -969,8 +1210,26 @@
 
         player = new shaka.Player();
         player.configure({
+          manifest: {
+            // The parser fetches the initial file with the *manifest* retry
+            // parameters, not the streaming ones (bjsn_shaka_parser.js passes
+            // `this.config_.retryParameters` to makeRequest), and the default
+            // is maxAttempts 2 on a 1 s base delay -- fewer tries and a slower
+            // first retry than every other request in the stream gets. This is
+            // the one fetch that has to succeed for anything to play.
+            retryParameters: {
+              maxAttempts: 4,
+              baseDelay: 100,
+              backoffFactor: 2,
+              timeout: 10000,
+            },
+          },
           streaming: {
             lowLatencyMode: lowLatencyBox.checked,
+            // Own the failed-download policy rather than taking Shaka's, which
+            // is fatal on static streams and retries on a flat 1 s. See
+            // onStreamingFailure.
+            failureCallback: onStreamingFailure,
             // Off, or every segment is downloaded twice.
             //
             // SegmentPrefetch caches the SegmentIterator it builds on its first
@@ -988,10 +1247,15 @@
             // The standalone player has no prefetch either, so this is also the
             // right setting for the startup-metric parity this page is for.
             segmentPrefetchLimit: 0,
-            // A BJSN 404 on the next segment is normal (not yet published), so
-            // let Shaka's own retry handle it rather than failing the load.
+            // Two attempts, not six. A BJSN 404 on the next segment is normal
+            // (not yet published), and the retry that matters for it is the
+            // outer one in onStreamingFailure -- the standalone player likewise
+            // makes one attempt and then waits 100 ms. Six in-request attempts
+            // would burn ~3 s of backoff before the outer loop even hears about
+            // the failure. One in-request retry is kept because it covers a
+            // genuine transient blip for free.
             retryParameters: {
-              maxAttempts: 6,
+              maxAttempts: 2,
               baseDelay: 100,
               backoffFactor: 2,
               timeout: 10000,
@@ -1020,6 +1284,9 @@
             }
           }
         } catch (error) {
+          // Recorded so refreshStatus() keeps saying Error, rather than the UI
+          // timer overwriting it on the next tick.
+          session.error = error;
           if (error && error.code) {
             log('player.load() failed', {
               code: error.code, category: error.category, data: error.data,

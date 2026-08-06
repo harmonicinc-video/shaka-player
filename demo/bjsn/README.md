@@ -133,6 +133,42 @@ Startup marks from a representative run: source open 16 ms, first byte 38 ms,
 resolved 101 ms, init append 112 ms, first media append 147 ms, `canplay`
 118–148 ms, playing 191 ms.
 
+### Failed downloads
+
+A 404 on the next segment is the *normal* state of a live BJSN stream that has
+caught up with its origin, so neither player treats a failed download as a fault.
+The standalone player's whole policy is `SegmentDownloadManager` in
+`bjsn_mse.js`: retry the same segment every 100 ms, back off exponentially past
+10 consecutive failures, cap at 5 s, never give up, never surface an error.
+
+The Shaka page carries the same policy, because Shaka's own default is not
+enough:
+
+| | Shaka's default `failureCallback` | This page |
+| --- | --- | --- |
+| Static stream | **fatal immediately** (`if (!this.isLive()) return;`) | retried, same as live |
+| Retry delay | flat 1 s (0.1 s in low-latency mode) | 100 ms, then exponential to a 5 s cap past 10 failures |
+| Reported as | red banner, "Error" | `Retrying (n)` chip + the Download health block |
+
+`streaming.retryParameters` is deliberately down to `maxAttempts: 2`. The retry
+that matters is the outer one; six in-request attempts would burn ~3 s of backoff
+before the outer loop even heard about the failure. One in-request retry is kept
+because it covers a genuine transient blip for free. `manifest.retryParameters`
+is set too — the parser fetches the initial file with *those*, not the streaming
+ones, and the default is a slower and shorter-lived retry than the rest of the
+stream gets.
+
+Failures are logged on the first attempt and every tenth after that, the way the
+parser's "waiting for seq" line is: at 100 ms intervals, logging every attempt
+would bury everything else in the pane. Recovery gets one line naming how many
+attempts it took. The **Download health** block in the metrics panel carries
+state, totals, time since the last success, and the last failure.
+
+Verified against a permanent 404 (the fixture set stops at `media_11909`):
+attempt 1 at 100 ms, attempt 10 at 100 ms, attempt 20 at the 5 s ceiling, no
+banner throughout, then `download recovered: media_11910.mp4 arrived after 21
+failed attempts` once the file was put in place.
+
 ### Three things this prototype got wrong first, worth not repeating
 
 All three are Shaka defaults that fight the shape of a BJSN manifest, and all
@@ -337,6 +373,24 @@ See [`tools/README.md`](../../tools/README.md).
 - **BJSN-specific parse failures reuse `UNABLE_TO_GUESS_MANIFEST_TYPE`.** There
   is no BJSN error code, and inventing one would mean editing `lib/util/error.js`.
   The message carries the real reason.
+- **The retry delay is a floor, not a cadence.** StreamingEngine re-fetches only
+  when it wants more data, so with a healthy buffer the observed spacing was
+  ~2.9 s per attempt against a requested 100 ms. Kinder to the origin than the
+  standalone player's unconditional hammering, but it means the two players'
+  retry *rates* are not comparable even though their policies match.
+- **A recoverable streaming error still arrives as CRITICAL.**
+  `handleStreamingError_()` fires the `error` event *before* calling the
+  `failureCallback` that downgrades severity, so `error.severity` cannot be used
+  to tell a transient 404 from a real fault. The page classifies from
+  `error.code` plus the request type instead; do not "simplify" it back to a
+  severity check.
+- **A segment the origin never publishes still stalls playback.**
+  `markAsUnavailable()` exists but nothing in `streaming_engine.js` consults
+  `Status.UNAVAILABLE`, and `SegmentIndex` has no public single-reference
+  removal — `evict(time)` would take the seek history with it. So the retry loop
+  runs forever on a permanently missing segment. The standalone player behaves
+  the same way, so this is not a regression against the reference; see the plan's
+  §3.6 for what moving past one would cost.
 
 ### The standalone player
 
