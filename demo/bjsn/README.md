@@ -307,12 +307,17 @@ is a bare Chrome error page that looks like the file is missing.
   with `initializeMediaSource: false` — attaching eagerly would hang the page
   before it could explain itself, and would also move the `sourceOpen` mark to
   before the first click, where it does not belong.
-- **`Last-Segment-Duration` needs `Access-Control-Expose-Headers`.** The demo
-  page cannot be served from the origin's own port, so it is always
-  cross-origin. The reference origin exposes only `Content-Range` and
-  `Content-Length`, so the parser's `Last-Segment-Duration` read returns null
-  and it falls back to `tfdt` deltas. That degrades gracefully and is worth
-  fixing on the origin anyway.
+- **`Last-Segment-Duration` is not the live path, and should not be treated as
+  one.** The reference origin emits the header, but it is not yet a real
+  implementation on the origin side, and the value seen so far is a constant
+  `2000`. It is also unreadable here regardless: the demo page cannot be served
+  from the origin's own port, so it is always cross-origin, and the origin's
+  `Access-Control-Expose-Headers` lists only `Content-Range` and
+  `Content-Length` — a header absent from that list is invisible to JavaScript
+  even when it is on the wire. Both together mean the parser's read returns
+  null and it derives duration from `tfdt` deltas instead. That is the path
+  actually under test, and it is the one to trust. Exposing the header via CORS
+  is worth doing only once the origin genuinely implements it.
 
 ### Verification status (2026-08-10)
 
