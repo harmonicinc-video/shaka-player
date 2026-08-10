@@ -1,0 +1,1774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BJSN Fast Channel Switching - Harmonic Inc</title>
+  <style>
+    :root {
+      /* Harmonic Inc brand colours, as bjsn_shaka_player.html. */
+      --color-scooter: #25B0D9;
+      --color-tangaroa: #03243D;
+      --color-white: #FFFFFF;
+
+      --dock-bg: rgba(3, 36, 61, 0.92);
+      --hairline: rgba(255, 255, 255, 0.12);
+      --dim: rgba(255, 255, 255, 0.55);
+      --mono: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      height: 100%;
+      background: #000;
+      color: var(--color-white);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+          'Helvetica Neue', Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    /* ------------------------------------------------------------- stage */
+
+    #stage {
+      position: fixed;
+      inset: 0 0 72px 0;
+      background: #000;
+      overflow: hidden;
+    }
+
+    #stage video,
+    #freeze {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+      display: block;
+    }
+
+    /* The frozen outgoing frame, held over the video for the length of the
+       tune.  Real set-top boxes do this; without it a cold switch reads as a
+       glitch rather than a channel change. */
+    #freeze {
+      z-index: 2;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 90ms linear;
+    }
+
+    #freeze.showing { opacity: 1; transition: none; }
+
+    /* ---------------------------------------------------------------- OSD */
+
+    #osd {
+      position: absolute;
+      left: 3rem;
+      bottom: 3rem;
+      z-index: 3;
+      min-width: 340px;
+      padding: 1rem 1.4rem;
+      border-radius: 10px;
+      border-left: 4px solid var(--color-scooter);
+      background: rgba(3, 36, 61, 0.86);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+      opacity: 0;
+      transform: translateY(12px);
+      transition: opacity 180ms ease, transform 180ms ease;
+      pointer-events: none;
+    }
+
+    #osd.showing { opacity: 1; transform: translateY(0); }
+
+    .osd-top {
+      display: flex;
+      align-items: baseline;
+      gap: 0.8rem;
+    }
+
+    .osd-num {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: var(--color-scooter);
+      letter-spacing: 0.5px;
+    }
+
+    .osd-name {
+      font-size: 1.6rem;
+      font-weight: 300;
+      letter-spacing: -0.3px;
+    }
+
+    .osd-bottom {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      margin-top: 0.5rem;
+      font-size: 0.95rem;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.1rem 0.55rem;
+      border-radius: 20px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      background: var(--color-scooter);
+      color: var(--color-white);
+    }
+
+    .badge.dash, .badge.hls { background: #b06a25; }
+
+    .osd-tune { color: var(--dim); }
+    .osd-tune strong { color: var(--color-white); font-weight: 600; }
+
+    .live {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.75rem;
+      letter-spacing: 0.8px;
+      color: var(--dim);
+    }
+
+    .live-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #7CFFB2;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .live-dot.off { background: #777; animation: none; }
+
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    #hint {
+      position: absolute;
+      top: 1.25rem; right: 1.5rem;
+      z-index: 3;
+      font-size: 0.8rem;
+      color: rgba(255, 255, 255, 0.45);
+      text-align: right;
+      line-height: 1.7;
+      pointer-events: none;
+    }
+
+    #hint kbd {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      padding: 0.1rem 0.35rem;
+      border: 1px solid var(--hairline);
+      border-bottom-width: 2px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    #warn {
+      position: absolute;
+      top: 1.25rem; left: 1.5rem;
+      z-index: 4;
+      max-width: 46ch;
+      padding: 0.7rem 1rem;
+      border-radius: 8px;
+      background: rgba(217, 45, 37, 0.92);
+      font-size: 0.85rem;
+      line-height: 1.5;
+    }
+
+    #warn.hidden, #hint.hidden { display: none; }
+
+    /* --------------------------------------------------------------- dock */
+
+    #dock {
+      position: fixed;
+      left: 0; right: 0; bottom: 0;
+      height: 72px;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0 1.25rem;
+      background: var(--dock-bg);
+      backdrop-filter: blur(10px);
+      border-top: 1px solid var(--hairline);
+    }
+
+    .ch-button {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.55rem 1rem;
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--color-white);
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: background 140ms ease, border-color 140ms ease;
+      max-width: 22rem;
+    }
+
+    .ch-button:hover { background: rgba(255, 255, 255, 0.1); }
+
+    .ch-button.active {
+      border-color: var(--color-scooter);
+      background: rgba(37, 176, 217, 0.18);
+    }
+
+    .ch-button .num {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .ch-button .label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .spacer { flex: 1; }
+
+    .dock-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      font-size: 0.85rem;
+      color: var(--dim);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .dock-control input[type="checkbox"] { cursor: pointer; }
+
+    select, input[type="text"] {
+      font-family: inherit;
+      font-size: 0.85rem;
+      padding: 0.35rem 0.5rem;
+      border-radius: 6px;
+      border: 1px solid var(--hairline);
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--color-white);
+    }
+
+    select:focus, input[type="text"]:focus {
+      outline: none;
+      border-color: var(--color-scooter);
+    }
+
+    .readout {
+      font-family: var(--mono);
+      font-size: 0.85rem;
+      color: var(--dim);
+      white-space: nowrap;
+    }
+
+    .readout strong { color: var(--color-white); }
+
+    .ghost-button {
+      padding: 0.45rem 0.9rem;
+      border: 1px solid var(--hairline);
+      border-radius: 7px;
+      background: transparent;
+      color: var(--color-white);
+      font-family: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+
+    .ghost-button:hover { background: rgba(255, 255, 255, 0.08); }
+    .ghost-button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ------------------------------------------------------- setup panel */
+
+    #setup, #drawer {
+      position: fixed;
+      left: 0; right: 0;
+      z-index: 20;
+      background: #071726;
+      border-top: 1px solid var(--hairline);
+      box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.5);
+    }
+
+    #setup {
+      top: 0;
+      border-top: none;
+      border-bottom: 1px solid var(--hairline);
+      padding: 1.25rem 1.5rem;
+    }
+
+    #setup.hidden, #drawer.hidden { display: none; }
+
+    #setup h2, #drawer h2 {
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      color: var(--color-scooter);
+      margin-bottom: 0.8rem;
+    }
+
+    .setup-row {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      margin-bottom: 0.6rem;
+    }
+
+    .setup-row .num {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--dim);
+      width: 3.2rem;
+    }
+
+    .setup-row .name-field { width: 14rem; }
+    .setup-row .url-field { flex: 1; font-family: var(--mono); font-size: 0.8rem; }
+
+    .setup-note {
+      margin-top: 0.75rem;
+      font-size: 0.8rem;
+      color: var(--dim);
+      line-height: 1.6;
+    }
+
+    /* ------------------------------------------------------------ drawer */
+
+    #drawer {
+      bottom: 72px;
+      max-height: 68vh;
+      overflow-y: auto;
+      padding: 1.25rem 1.5rem 1.75rem;
+    }
+
+    .drawer-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+      gap: 1.75rem;
+      align-items: start;
+    }
+
+    .block { margin-bottom: 1.5rem; }
+
+    /* Waterfall */
+    .wf-row {
+      display: grid;
+      grid-template-columns: 13rem 1fr 5rem;
+      align-items: center;
+      gap: 0.75rem;
+      font-size: 0.8rem;
+      margin-bottom: 3px;
+    }
+
+    .wf-label { color: var(--dim); font-family: var(--mono); font-size: 0.75rem; }
+
+    .wf-track {
+      position: relative;
+      height: 14px;
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.05);
+      overflow: hidden;
+    }
+
+    .wf-bar {
+      position: absolute;
+      top: 0; bottom: 0;
+      background: var(--color-scooter);
+      border-radius: 3px;
+      min-width: 2px;
+    }
+
+    .wf-bar.network { background: #f0a63c; }
+    .wf-bar.paint { background: #7CFFB2; }
+
+    .wf-value {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      text-align: right;
+    }
+
+    .wf-note {
+      grid-column: 2 / 4;
+      font-size: 0.7rem;
+      color: rgba(255, 255, 255, 0.35);
+      font-family: var(--mono);
+      margin: -1px 0 4px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      font-family: var(--mono);
+    }
+
+    th, td {
+      text-align: right;
+      padding: 0.3rem 0.5rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      white-space: nowrap;
+    }
+
+    th {
+      color: var(--color-scooter);
+      font-weight: 600;
+      font-size: 0.68rem;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+    }
+
+    th:first-child, td:first-child { text-align: left; }
+
+    td.dim { color: var(--dim); }
+    td.bad { color: #ff8a80; }
+
+    .empty-note {
+      font-size: 0.8rem;
+      color: var(--dim);
+      line-height: 1.6;
+    }
+
+    #drawerLog {
+      height: 150px;
+      overflow-y: auto;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: rgba(255, 255, 255, 0.7);
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--hairline);
+      border-radius: 6px;
+      padding: 0.6rem;
+    }
+
+    .drawer-actions {
+      display: flex;
+      gap: 0.6rem;
+      margin-top: 0.8rem;
+      flex-wrap: wrap;
+    }
+
+    .footnote {
+      margin-top: 1rem;
+      font-size: 0.75rem;
+      color: rgba(255, 255, 255, 0.4);
+      line-height: 1.6;
+      max-width: 90ch;
+    }
+
+    @media (max-width: 1100px) {
+      .drawer-grid { grid-template-columns: 1fr; }
+      #osd { left: 1.25rem; bottom: 1.5rem; min-width: 0; }
+      #hint { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <video playsinline muted></video>
+    <canvas id="freeze"></canvas>
+
+    <div id="warn" class="hidden"></div>
+
+    <div id="hint">
+      <div><kbd>1</kbd> <kbd>2</kbd> tune &middot; <kbd>space</kbd> swap</div>
+      <div><kbd>m</kbd> mute &middot; <kbd>a</kbd> auto-zap &middot; <kbd>d</kbd> metrics</div>
+    </div>
+
+    <div id="osd">
+      <div class="osd-top">
+        <span class="osd-num" id="osdNum">CH 1</span>
+        <span class="osd-name" id="osdName">&mdash;</span>
+      </div>
+      <div class="osd-bottom">
+        <span class="badge" id="osdBadge">BJSN</span>
+        <span class="osd-tune" id="osdTune">tuning&hellip;</span>
+        <span class="live"><span class="live-dot" id="osdDot"></span>LIVE</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="dock">
+    <button class="ch-button" id="ch0" type="button">
+      <span class="num">1</span><span class="label">Channel 1</span>
+    </button>
+    <button class="ch-button" id="ch1" type="button">
+      <span class="num">2</span><span class="label">Channel 2</span>
+    </button>
+
+    <label class="dock-control">
+      <input type="checkbox" id="autoZap"> auto-zap
+    </label>
+    <select id="autoZapInterval" title="Auto-zap interval">
+      <option value="1500">1.5s</option>
+      <option value="3000" selected>3s</option>
+      <option value="5000">5s</option>
+      <option value="8000">8s</option>
+    </select>
+
+    <span class="spacer"></span>
+
+    <span class="readout" id="readout">no samples yet</span>
+
+    <label class="dock-control">
+      <input type="checkbox" id="mutedBox" checked> mute
+    </label>
+    <button class="ghost-button" id="setupToggle" type="button">Channels</button>
+    <button class="ghost-button" id="drawerToggle" type="button">Metrics &#9662;</button>
+  </div>
+
+  <div id="setup" class="hidden">
+    <h2>Channels</h2>
+    <div class="setup-row">
+      <span class="num">CH 1</span>
+      <input type="text" class="name-field" id="name0" placeholder="Channel name">
+      <input type="text" class="url-field" id="url0" placeholder="Stream URL">
+    </div>
+    <div class="setup-row">
+      <span class="num">CH 2</span>
+      <input type="text" class="name-field" id="name1" placeholder="Channel name">
+      <input type="text" class="url-field" id="url1" placeholder="Stream URL">
+    </div>
+    <div class="setup-row">
+      <span class="num"></span>
+      <button class="ghost-button" id="applyChannels" type="button">Apply &amp; tune CH 1</button>
+      <span class="setup-note" id="setupNote"></span>
+    </div>
+    <p class="setup-note">
+      Format is taken from the extension: <code>.mpd</code> &rarr; DASH,
+      <code>.m3u8</code> &rarr; HLS, anything else &rarr; BJSN. Channels persist
+      to <code>localStorage</code> and can be shared as
+      <code>?a=&hellip;&amp;b=&hellip;</code>.
+    </p>
+  </div>
+
+  <div id="drawer" class="hidden">
+    <div class="drawer-grid">
+      <div>
+        <div class="block">
+          <h2>Last tune &mdash; <span id="wfTitle">no tune yet</span></h2>
+          <div id="waterfall"></div>
+        </div>
+        <div class="block">
+          <h2>Samples</h2>
+          <div id="samples"></div>
+        </div>
+      </div>
+      <div>
+        <div class="block">
+          <h2>Zap statistics</h2>
+          <div id="stats"></div>
+        </div>
+        <div class="block">
+          <h2>Log</h2>
+          <pre id="drawerLog"></pre>
+          <div class="drawer-actions">
+            <button class="ghost-button" id="copyJson" type="button">Copy results as JSON</button>
+            <button class="ghost-button" id="resetStats" type="button">Reset statistics</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="footnote" id="footnote"></p>
+  </div>
+
+  <!--
+    Uncompiled Shaka through the Closure debug loader, exactly as
+    bjsn_shaka_player.html does it.  Needs dist/deps.js, which
+    `python3 build/gendeps.py` writes.
+  -->
+  <script>
+    window.CLOSURE_IMPORT_SCRIPT = function(src) {
+      const script = document.createElement('script');
+      script.type = 'text/javascript';
+      script.src = src;
+      script.defer = true;
+      script.async = false;  // eslint-disable-line id-denylist
+      document.head.appendChild(script);
+      return true;  // Or the Closure loader stops.
+    };
+  </script>
+  <script defer src="../../node_modules/google-closure-library/closure/goog/base.js"></script>
+  <script defer src="../../dist/deps.js"></script>
+  <script defer src="../../lib/debug/asserts.js"></script>
+  <script defer src="../../shaka-player.uncompiled.js"></script>
+
+  <script src="bjsn_utils.js"></script>
+  <script src="bjsn_timing_probe.js"></script>
+  <script src="bjsn_shaka_parser.js"></script>
+
+  <script type="text/javascript">
+    (function() {
+      'use strict';
+
+      // ------------------------------------------------------------ elements
+
+      const video = document.querySelector('video');
+      const freezeCanvas = document.getElementById('freeze');
+      const osd = document.getElementById('osd');
+      const osdNum = document.getElementById('osdNum');
+      const osdName = document.getElementById('osdName');
+      const osdBadge = document.getElementById('osdBadge');
+      const osdTune = document.getElementById('osdTune');
+      const osdDot = document.getElementById('osdDot');
+      const warn = document.getElementById('warn');
+      const hint = document.getElementById('hint');
+      const readout = document.getElementById('readout');
+      const chButtons = [
+        document.getElementById('ch0'),
+        document.getElementById('ch1'),
+      ];
+      const nameInputs = [
+        document.getElementById('name0'),
+        document.getElementById('name1'),
+      ];
+      const urlInputs = [
+        document.getElementById('url0'),
+        document.getElementById('url1'),
+      ];
+      const autoZapBox = document.getElementById('autoZap');
+      const autoZapInterval = document.getElementById('autoZapInterval');
+      const mutedBox = document.getElementById('mutedBox');
+      const setupPanel = document.getElementById('setup');
+      const setupNote = document.getElementById('setupNote');
+      const drawer = document.getElementById('drawer');
+      const drawerLog = document.getElementById('drawerLog');
+      const waterfallElement = document.getElementById('waterfall');
+      const wfTitle = document.getElementById('wfTitle');
+      const samplesElement = document.getElementById('samples');
+      const statsElement = document.getElementById('stats');
+      const footnote = document.getElementById('footnote');
+
+      // ------------------------------------------------------------- config
+
+      const DEFAULT_CHANNELS = [
+        {
+          name: 'Livestream 1',
+          url: 'http://localhost:8080/live/livestream1/media_first.mp4',
+        },
+        {
+          name: 'Livestream',
+          url: 'http://localhost:8080/live/livestream/media_first.mp4',
+        },
+      ];
+
+      const STORAGE_KEY = 'bjsn-zap-demo-channels';
+      const MAX_LOG_LINES = 200;
+      const MAX_SAMPLE_ROWS = 20;
+      const OSD_HIDE_MS = 3200;
+      // A tune that produces no frame within this is not slow, it is stuck.
+      // By far the likeliest cause is a tab that is not in the foreground:
+      // Chrome never fires `sourceopen` there, so `load()` itself never
+      // resolves and nothing downstream ever runs.
+      const TUNE_TIMEOUT_MS = 10000;
+
+      // Same failed-download policy as bjsn_shaka_player.html: a BJSN 404 means
+      // "not published yet", never a fault.  See that page's DownloadHealth for
+      // the full reasoning; here it is trimmed to what a zap demo needs, since
+      // download health is not what this page measures.
+      const RETRY_INTERVAL_MS = 100;
+      const MAX_RETRY_ATTEMPTS = 10;
+      const MAX_BACKOFF_MS = 5000;
+
+      // ------------------------------------------------------------- state
+
+      const probe = new BjsnTimingProbe();
+
+      /** @type {?shaka.Player} */
+      let player = null;
+      /** @type {!Array<!Object>} The two channel definitions. */
+      let channels = [];
+      /** @type {number} Index of the channel currently tuned, or -1. */
+      let activeIndex = -1;
+      /**
+       * Bumped on every tune.  Every async continuation checks it before
+       * touching shared state, so a zap that lands while an earlier one is
+       * still in flight (key mashing is part of this demo) cannot report the
+       * wrong channel's numbers.
+       */
+      let zapGeneration = 0;
+      /** @type {?Object} The tune currently in flight or just completed. */
+      let tune = null;
+      /** @type {!Array<!Object>} Completed, recorded samples. */
+      let samples = [];
+      /** @type {?Object} The very first tune of the session, kept apart. */
+      let firstTuneSample = null;
+      /** @type {!Array<!Object>} Network requests for the tune in flight. */
+      let requestLog = [];
+      let autoZapTimer = null;
+      let osdTimer = null;
+      let consecutiveFailures = 0;
+      let hasWarnedAboutHiddenTab = false;
+
+      // ---------------------------------------------------------- utilities
+
+      function log(message, ...args) {
+        console.log(message, ...args);
+        const stamp = new Date().toLocaleTimeString();
+        const extra = args.length ?
+            ' ' + args.map((a) => safeJson(a)).join(' ') : '';
+        let lines = drawerLog.textContent.split('\n').filter((l) => l.trim());
+        lines.push(`[${stamp}] ${message}${extra}`);
+        if (lines.length > MAX_LOG_LINES) {
+          lines = lines.slice(lines.length - MAX_LOG_LINES);
+        }
+        drawerLog.textContent = lines.join('\n');
+        drawerLog.scrollTop = drawerLog.scrollHeight;
+      }
+
+      function safeJson(value) {
+        if (typeof value === 'string') {
+          return value;
+        }
+        try {
+          return JSON.stringify(value);
+        } catch (e) {
+          return String(value);
+        }
+      }
+
+      function ms(value) {
+        return value === null || value === undefined || !isFinite(value) ?
+            '—' : `${Math.round(value)} ms`;
+      }
+
+      function kb(bytes) {
+        return !bytes ? '—' : `${(bytes / 1024).toFixed(0)} KB`;
+      }
+
+      function showWarning(text) {
+        warn.textContent = text;
+        warn.classList.remove('hidden');
+      }
+
+      function hideWarning() {
+        warn.classList.add('hidden');
+      }
+
+      /** @return {number} The p-th percentile of `values`, p in [0, 1]. */
+      function percentile(values, p) {
+        if (!values.length) {
+          return NaN;
+        }
+        const sorted = values.slice().sort((a, b) => a - b);
+        const index = Math.min(
+            sorted.length - 1, Math.max(0, Math.round(p * (sorted.length - 1))));
+        return sorted[index];
+      }
+
+      // ------------------------------------------------------------ channels
+
+      /**
+       * BJSN segments are plain `.mp4` URLs, so the mime type has to be handed
+       * to `load()` explicitly or Shaka treats them as progressive `src=`
+       * content.  DASH and HLS are left to Shaka's own detection.
+       *
+       * @param {string} url
+       * @return {{format: string, mime: ?string}}
+       */
+      function classify(url) {
+        const path = url.split('?')[0].toLowerCase();
+        if (path.endsWith('.mpd')) {
+          return {format: 'DASH', mime: null};
+        }
+        if (path.endsWith('.m3u8')) {
+          return {format: 'HLS', mime: null};
+        }
+        return {format: 'BJSN', mime: BJSN_MIME_TYPE};
+      }
+
+      function makeChannel(index, name, url) {
+        const {format, mime} = classify(url);
+        return {
+          index,
+          number: index + 1,
+          name: name || `Channel ${index + 1}`,
+          url,
+          format,
+          mime,
+        };
+      }
+
+      /**
+       * Channels come from the query string first (so a demo is shareable),
+       * then localStorage (so it survives the origin rotating its URLs), then
+       * the built-in defaults.
+       */
+      function loadChannels() {
+        const params = new URLSearchParams(location.search);
+        const fromQuery = [params.get('a'), params.get('b')];
+        let stored = null;
+        try {
+          stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+        } catch (e) {
+          stored = null;
+        }
+
+        return [0, 1].map((i) => {
+          const url = fromQuery[i] ||
+              (stored && stored[i] && stored[i].url) ||
+              DEFAULT_CHANNELS[i].url;
+          const name = params.get(i === 0 ? 'an' : 'bn') ||
+              (stored && stored[i] && stored[i].name) ||
+              DEFAULT_CHANNELS[i].name;
+          return makeChannel(i, name, url);
+        });
+      }
+
+      function saveChannels() {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(
+              channels.map((c) => ({name: c.name, url: c.url}))));
+        } catch (e) {
+          // Private browsing, quota, etc.  Not worth interrupting a demo for.
+        }
+      }
+
+      function renderChannelUi() {
+        channels.forEach((channel, i) => {
+          chButtons[i].querySelector('.label').textContent = channel.name;
+          chButtons[i].title = `${channel.format} — ${channel.url}`;
+          nameInputs[i].value = channel.name;
+          urlInputs[i].value = channel.url;
+        });
+        updateActiveButton();
+      }
+
+      function updateActiveButton() {
+        chButtons.forEach((button, i) => {
+          button.classList.toggle('active', i === activeIndex);
+        });
+      }
+
+      // ----------------------------------------------------------- freeze
+
+      /**
+       * Snapshot the frame on screen and hold it over the video for the length
+       * of the tune.  Without this the element goes black the moment Shaka
+       * detaches the old MediaSource, which reads as a glitch; a set-top box
+       * holds the outgoing frame instead.  The measured gap is unaffected — it
+       * is reported in the OSD and the drawer either way.
+       */
+      function freezeCurrentFrame() {
+        if (!video.videoWidth || !video.videoHeight) {
+          return;  // Nothing on screen yet: the first tune has no outgoing frame.
+        }
+        freezeCanvas.width = video.videoWidth;
+        freezeCanvas.height = video.videoHeight;
+        try {
+          freezeCanvas.getContext('2d').drawImage(video, 0, 0);
+          freezeCanvas.classList.add('showing');
+        } catch (e) {
+          // A tainted canvas would throw here.  Losing the freeze is cosmetic.
+          log('could not snapshot the outgoing frame: ' + e.message);
+        }
+      }
+
+      function clearFreeze() {
+        freezeCanvas.classList.remove('showing');
+      }
+
+      // -------------------------------------------------------------- OSD
+
+      function showOsd(channel, state, tuneMs) {
+        osdNum.textContent = `CH ${channel.number}`;
+        osdName.textContent = channel.name;
+        osdBadge.textContent = channel.format;
+        osdBadge.className = 'badge ' + channel.format.toLowerCase();
+
+        if (state === 'tuning') {
+          osdTune.textContent = 'tuning…';
+          osdDot.classList.add('off');
+        } else if (state === 'tuned') {
+          osdTune.innerHTML = `tuned in <strong>${ms(tuneMs)}</strong>`;
+          osdDot.classList.remove('off');
+        } else {
+          osdTune.textContent = state;
+          osdDot.classList.add('off');
+        }
+
+        osd.classList.add('showing');
+        if (osdTimer) {
+          clearTimeout(osdTimer);
+        }
+        // Only a *successful* tune auto-hides.  While tuning there is nothing
+        // else on screen explaining the freeze, and on a failure the banner is
+        // the explanation — in both cases hiding it strands the viewer.
+        if (state === 'tuned') {
+          osdTimer = setTimeout(() => osd.classList.remove('showing'),
+              OSD_HIDE_MS);
+        }
+      }
+
+      // ------------------------------------------------- request accounting
+
+      /**
+       * Every request Shaka issues for the tune in flight, with its start and
+       * end.  This is what makes the BJSN-vs-DASH argument measurable
+       * independently of the network: BJSN needs one request before the first
+       * frame, DASH needs a serial chain of manifest → init → media.
+       *
+       * Resource Timing would be the obvious source and is not usable here:
+       * the origin does not send `Timing-Allow-Origin`, so cross-origin entries
+       * come back opaque.  Shaka's own filters see everything.
+       */
+      function installNetworkFilters() {
+        const engine = player.getNetworkingEngine();
+
+        engine.registerRequestFilter((type, request) => {
+          requestLog.push({
+            uri: String(request.uris && request.uris[0] || ''),
+            type,
+            typeName: requestTypeName(type),
+            start: probe.now(),
+            end: null,
+            bytes: 0,
+          });
+        });
+
+        engine.registerResponseFilter((type, response) => {
+          const uri = String(response.uri || response.originalUri || '');
+          // Match the newest still-open entry for this URI: a retried segment
+          // produces several entries with the same URI, and it is the most
+          // recent one that just completed.
+          for (let i = requestLog.length - 1; i >= 0; i--) {
+            const entry = requestLog[i];
+            if (entry.end === null && (entry.uri === uri || !uri)) {
+              entry.end = probe.now();
+              entry.bytes = response.data ? response.data.byteLength : 0;
+              return;
+            }
+          }
+        });
+      }
+
+      function requestTypeName(type) {
+        if (!window.shaka) {
+          return String(type);
+        }
+        const RequestType = shaka.net.NetworkingEngine.RequestType;
+        for (const key of Object.keys(RequestType)) {
+          if (RequestType[key] === type) {
+            return key.toLowerCase();
+          }
+        }
+        return String(type);
+      }
+
+      /**
+       * How many *serial* round trips the requests represent — the figure that
+       * does not shrink when the network gets fast, and therefore the one that
+       * carries the argument on a loopback origin.
+       *
+       * A request that starts before the current generation has finished could
+       * have been issued in parallel, so it joins that generation.  One that
+       * starts only after everything before it completed had to wait for a
+       * response to know its own URL, so it opens a new generation.
+       *
+       * @param {!Array<!Object>} entries
+       * @return {number}
+       */
+      function serialGenerations(entries) {
+        const ordered = entries.slice().sort((a, b) => a.start - b.start);
+        let generations = 0;
+        let generationEnd = -Infinity;
+        for (const entry of ordered) {
+          const end = entry.end === null ? entry.start : entry.end;
+          if (entry.start >= generationEnd) {
+            generations++;
+            generationEnd = end;
+          } else {
+            generationEnd = Math.max(generationEnd, end);
+          }
+        }
+        return generations;
+      }
+
+      // ------------------------------------------------------ failure policy
+
+      function downloadFailureInfo(error) {
+        if (!error || !window.shaka ||
+            error.category !== shaka.util.Error.Category.NETWORK) {
+          return null;
+        }
+        const Code = shaka.util.Error.Code;
+        const data = error.data || [];
+        let what = null;
+        switch (error.code) {
+          case Code.BAD_HTTP_STATUS: what = `HTTP ${data[1]}`; break;
+          case Code.HTTP_ERROR: what = 'network error'; break;
+          case Code.TIMEOUT: what = 'timeout'; break;
+          default: return null;
+        }
+        const uri = String(data[0] || '');
+        return {uri, name: uri.split('/').pop() || uri, what};
+      }
+
+      /**
+       * Replaces Shaka's default, which gives up immediately on a static
+       * stream and retries on a flat 1 s.  A BJSN 404 on the next segment only
+       * ever means "the origin has not published it yet".  Same policy as
+       * bjsn_shaka_player.html.
+       *
+       * @param {!shaka.util.Error} error
+       */
+      function onStreamingFailure(error) {
+        const info = downloadFailureInfo(error);
+        if (!info) {
+          log('streaming failure is not a download failure, leaving it fatal', {
+            code: error.code, category: error.category,
+          });
+          return;
+        }
+
+        consecutiveFailures++;
+        error.severity = shaka.util.Error.Severity.RECOVERABLE;
+
+        let delayMs = RETRY_INTERVAL_MS;
+        if (consecutiveFailures > MAX_RETRY_ATTEMPTS) {
+          delayMs = Math.min(
+              RETRY_INTERVAL_MS *
+                  Math.pow(2, consecutiveFailures - MAX_RETRY_ATTEMPTS),
+              MAX_BACKOFF_MS);
+        }
+
+        if (consecutiveFailures === 1 || consecutiveFailures % 10 === 0) {
+          log(`download failed: ${info.name} ${info.what} — attempt ` +
+              `${consecutiveFailures}, retrying in ${delayMs}ms`);
+        }
+        if (player) {
+          player.retryStreaming(delayMs / 1000);
+        }
+      }
+
+      // ---------------------------------------------------------- the zap
+
+      /**
+       * Tune a channel.  This is the whole demo: one player, permanently
+       * attached to one video element, `load()` called again.  Nothing is
+       * pre-fetched and nothing of the outgoing channel is kept, so the number
+       * this produces is a real cold join — what a set-top box pays.
+       *
+       * @param {number} index
+       * @param {boolean=} isAuto True when the auto-zap timer fired it.
+       */
+      async function zap(index, isAuto = false) {
+        if (!player || index < 0 || index >= channels.length) {
+          return;
+        }
+        const channel = channels[index];
+        const generation = ++zapGeneration;
+
+        // Snapshot before anything detaches the old MediaSource.
+        freezeCurrentFrame();
+
+        // t = 0 is *this instant*, the moment of the click.  Everything the
+        // probe and the parser hooks mark from here is relative to it, so the
+        // waterfall starts where the user's intent does rather than where the
+        // player happens to begin work.
+        probe.start(null);
+        requestLog = [];
+        consecutiveFailures = 0;
+
+        tune = {
+          generation,
+          channel,
+          isAuto,
+          startedAt: performance.now(),
+          firstFrameMs: null,
+          hiddenDuringTune: document.visibilityState !== 'visible',
+          error: null,
+          frameSource: null,
+          watchdog: null,
+        };
+
+        // Started here rather than after `load()` resolves, because the stall
+        // this exists to explain happens *inside* `load()`.
+        tune.watchdog = setTimeout(() => onTuneStuck(generation), TUNE_TIMEOUT_MS);
+
+        activeIndex = index;
+        updateActiveButton();
+        showOsd(channel, 'tuning');
+        hideWarning();
+
+        const onVisibility = () => {
+          if (document.visibilityState !== 'visible' && tune &&
+              tune.generation === generation) {
+            tune.hiddenDuringTune = true;
+          }
+        };
+        document.addEventListener('visibilitychange', onVisibility);
+
+        configureFor(channel);
+        video.muted = mutedBox.checked;
+
+        log(`zap → CH ${channel.number} "${channel.name}" (${channel.format}) ` +
+            channel.url);
+
+        try {
+          await player.load(channel.url, /* startTime= */ null,
+              channel.mime || undefined);
+          if (generation !== zapGeneration) {
+            return;  // Superseded by a later zap; its handler owns the UI now.
+          }
+          probe.mark('loadResolved');
+
+          // Registered only now, and deliberately: `load()` resolves before
+          // the first frame is painted (the parser's own numbers put load at
+          // ~100 ms and the first media append at ~147 ms), so there is no
+          // frame of the *new* channel to catch before this point — while
+          // registering earlier risks catching a trailing frame of the old one.
+          awaitFirstFrame(generation, channel);
+
+          if (video.paused) {
+            try {
+              await video.play();
+            } catch (e) {
+              log('video.play() rejected (autoplay policy?): ' + e.message);
+            }
+          }
+        } catch (error) {
+          if (generation !== zapGeneration) {
+            return;
+          }
+          clearTimeout(tune.watchdog);
+          tune.error = error;
+          const text = error && error.code ?
+              `${error.category}.${error.code} ${(error.data || []).join(' ')}` :
+              String(error && error.message || error);
+          log(`load failed: ${text}`);
+          showOsd(channel, 'failed to tune');
+          showWarning(`CH ${channel.number} failed to tune: ${text}`);
+          clearFreeze();
+        } finally {
+          document.removeEventListener('visibilitychange', onVisibility);
+        }
+      }
+
+      /**
+       * No frame after TUNE_TIMEOUT_MS.  Says which of the two likely causes
+       * it is, rather than leaving the OSD on "tuning…" with no explanation —
+       * a stuck tune and a slow one look identical on screen otherwise.
+       *
+       * @param {number} generation
+       */
+      function onTuneStuck(generation) {
+        if (!tune || tune.generation !== generation ||
+            tune.firstFrameMs !== null) {
+          return;
+        }
+        const hidden = document.visibilityState !== 'visible';
+        showOsd(tune.channel, 'no frame yet');
+        showWarning(hidden ?
+            'No frame after ' + (TUNE_TIMEOUT_MS / 1000) + ' s, and this tab ' +
+            'is not visible. Chrome never fires `sourceopen` in a background ' +
+            'tab, so the tune cannot start at all. Bring this window to the ' +
+            'front and tune again.' :
+            'No frame after ' + (TUNE_TIMEOUT_MS / 1000) + ' s. The origin may ' +
+            'not be reachable, or it has not published a playable segment. ' +
+            'See the log in the metrics drawer.');
+        log(`tune stuck: no frame after ${TUNE_TIMEOUT_MS} ms` +
+            (hidden ? ' (tab is not visible — this is the cause)' : ''));
+      }
+
+      /**
+       * Resolve the first painted frame of the new channel.
+       *
+       * `requestVideoFrameCallback` is the only signal that means a frame
+       * actually reached the compositor.  `canplay` and `playing` both fire on
+       * decoder state, and `playing` in particular is exactly what Chrome's
+       * tab-visibility gate corrupts — see the README's "Known quirks".
+       *
+       * @param {number} generation
+       * @param {!Object} channel
+       */
+      function awaitFirstFrame(generation, channel) {
+        if (typeof video.requestVideoFrameCallback === 'function') {
+          video.requestVideoFrameCallback((now) => {
+            if (generation !== zapGeneration) {
+              return;
+            }
+            probe.mark('firstFrame');
+            completeTune(generation, channel, 'requestVideoFrameCallback');
+          });
+          return;
+        }
+
+        // Firefox has no rVFC by default.  `playing` is later and coarser, so
+        // the sample is recorded but labelled, rather than silently mixed in
+        // with rVFC numbers as if the two measured the same thing.
+        const onPlaying = () => {
+          video.removeEventListener('playing', onPlaying);
+          if (generation !== zapGeneration) {
+            return;
+          }
+          probe.mark('firstFrame');
+          completeTune(generation, channel, 'playing event (no rVFC)');
+        };
+        video.addEventListener('playing', onPlaying);
+      }
+
+      /**
+       * @param {number} generation
+       * @param {!Object} channel
+       * @param {string} frameSource
+       */
+      function completeTune(generation, channel, frameSource) {
+        if (!tune || tune.generation !== generation) {
+          return;
+        }
+        clearTimeout(tune.watchdog);
+        clearFreeze();
+
+        const total = probe.get('firstFrame');
+        tune.firstFrameMs = total;
+        tune.frameSource = frameSource;
+
+        // Only the requests that could have contributed to the first frame.
+        const beforeFrame = requestLog.filter((r) => r.start <= total);
+
+        // `snapshot()` flattens marks to plain numbers, so the notes -- which
+        // carry the appended box types and the bjsn seq_num -- have to be
+        // re-attached here if the waterfall is to show them.
+        const snapshot = probe.snapshot();
+        const marks = {};
+        for (const key of Object.keys(snapshot.marks)) {
+          marks[key] = {at: snapshot.marks[key], note: probe.getNote(key)};
+        }
+
+        const sample = {
+          n: samples.length + (firstTuneSample ? 2 : 1),
+          channelNumber: channel.number,
+          channelName: channel.name,
+          format: channel.format,
+          url: channel.url,
+          totalMs: total,
+          marks,
+          counters: snapshot.counters,
+          requests: beforeFrame.length,
+          serialHops: serialGenerations(beforeFrame),
+          bytes: beforeFrame.reduce((sum, r) => sum + r.bytes, 0),
+          requestDetail: beforeFrame.map((r) => ({
+            uri: r.uri.split('/').pop() || r.uri,
+            type: r.typeName,
+            start: Math.round(r.start),
+            end: r.end === null ? null : Math.round(r.end),
+          })),
+          frameSource,
+          isFirstTune: firstTuneSample === null,
+          isAuto: tune.isAuto,
+          discarded: tune.hiddenDuringTune,
+        };
+
+        showOsd(channel, 'tuned', total);
+        renderWaterfall(sample);
+
+        if (sample.discarded) {
+          // A hidden tab does not attach a MediaSource and pauses muted media
+          // as background video, so the number would be meaningless.  Say so
+          // rather than poisoning the median with it.
+          log(`sample discarded: the tab was not visible during this tune ` +
+              `(${ms(total)})`);
+          if (!hasWarnedAboutHiddenTab) {
+            hasWarnedAboutHiddenTab = true;
+            showWarning(
+                'This tab was not visible during a tune, so that sample was ' +
+                'discarded. Chrome gates media on tab visibility — keep this ' +
+                'window in front or every number is meaningless.');
+          }
+        } else if (sample.isFirstTune) {
+          // The first tune of a session pays for MediaSource setup, codec
+          // configuration and the connection to the origin.  No later zap pays
+          // any of that, so folding it into the median would overstate them.
+          firstTuneSample = sample;
+          log(`first tune: ${ms(total)} (kept separate from the zap median — ` +
+              `it pays one-time setup no later zap does)`);
+        } else {
+          samples.push(sample);
+          log(`zap complete: CH ${channel.number} in ${ms(total)}, ` +
+              `${sample.requests} request(s), ${sample.serialHops} serial hop(s)`);
+        }
+
+        renderStats();
+        renderSamples();
+        renderReadout();
+      }
+
+      /** @param {!Object} channel */
+      function configureFor(channel) {
+        const isBjsn = channel.format === 'BJSN';
+        player.configure({
+          manifest: {
+            // The BJSN parser fetches the initial file with the *manifest*
+            // retry parameters, and Shaka's defaults there are slower and
+            // shorter-lived than the rest of the stream gets.  This is the one
+            // fetch a zap cannot survive losing.
+            retryParameters: {
+              maxAttempts: 4,
+              baseDelay: 100,
+              backoffFactor: 2,
+              timeout: 10000,
+            },
+          },
+          streaming: {
+            // Off for *both* formats, so the comparison is like for like.  For
+            // BJSN it is also mandatory: SegmentPrefetch caches the iterator it
+            // builds on its first call, a BJSN index grows one reference at a
+            // time behind it, and the two desynchronise permanently — every
+            // segment then downloads twice.  See bjsn_shaka_player.html.
+            segmentPrefetchLimit: 0,
+            retryParameters: {
+              maxAttempts: 2,
+              baseDelay: 100,
+              backoffFactor: 2,
+              timeout: 10000,
+            },
+            // BJSN owns its failed-download policy; for DASH and HLS a missing
+            // segment is a real fault and Shaka's own default is right.
+            failureCallback: isBjsn ? onStreamingFailure : undefined,
+          },
+        });
+      }
+
+      // -------------------------------------------------------- auto-zap
+
+      function setAutoZap(enabled) {
+        autoZapBox.checked = enabled;
+        if (autoZapTimer) {
+          clearInterval(autoZapTimer);
+          autoZapTimer = null;
+        }
+        if (!enabled) {
+          return;
+        }
+        autoZapTimer = setInterval(() => {
+          if (document.visibilityState !== 'visible') {
+            return;  // Would only produce discarded samples.
+          }
+          zap(activeIndex === 0 ? 1 : 0, /* isAuto= */ true);
+        }, Number(autoZapInterval.value));
+      }
+
+      // ------------------------------------------------------- rendering
+
+      function renderReadout() {
+        const zapTimes = samples.filter((s) => !s.discarded)
+            .map((s) => s.totalMs);
+        if (!zapTimes.length) {
+          readout.textContent = firstTuneSample ?
+              `first tune ${ms(firstTuneSample.totalMs)} · no zaps yet` :
+              'no samples yet';
+          return;
+        }
+        readout.innerHTML =
+            `last <strong>${ms(zapTimes[zapTimes.length - 1])}</strong> · ` +
+            `median <strong>${ms(percentile(zapTimes, 0.5))}</strong> · ` +
+            `n=${zapTimes.length}`;
+      }
+
+      /**
+       * The waterfall is the actual argument: it shows that a BJSN zap is one
+       * network round trip with parsing and painting either side of it.
+       *
+       * Stages are drawn in time order rather than a fixed order, because the
+       * order genuinely varies — `sourceOpen` can precede the first byte, and
+       * a DASH tune produces none of the BJSN parse marks at all.
+       *
+       * @param {!Object} sample
+       */
+      function renderWaterfall(sample) {
+        const STAGES = [
+          ['sourceOpen', 'MediaSource open', ''],
+          ['firstByte', 'first byte of segment', 'network'],
+          ['bjsnParsed', 'bjsn box parsed', ''],
+          ['moovParsed', 'moov parsed', ''],
+          ['manifestReady', 'manifest ready', ''],
+          ['loadResolved', 'player.load() resolved', ''],
+          ['sourceBufferCreated', 'SourceBuffer created', ''],
+          ['initAppend', 'init append', ''],
+          ['firstMediaAppend', 'first media append', ''],
+          ['firstFrame', 'FIRST FRAME PAINTED', 'paint'],
+        ];
+
+        const total = sample.totalMs || 1;
+        const rows = [];
+
+        wfTitle.textContent =
+            `CH ${sample.channelNumber} ${sample.channelName} · ` +
+            `${sample.format} · ${ms(sample.totalMs)}` +
+            (sample.discarded ? ' · DISCARDED (tab hidden)' : '');
+
+        const present = STAGES
+            .filter(([key]) => sample.marks[key] &&
+                sample.marks[key].at !== undefined)
+            .map(([key, label, cls]) => ({
+              key, label, cls, at: sample.marks[key].at,
+              note: sample.marks[key].note,
+            }))
+            .sort((a, b) => a.at - b.at);
+
+        let previousAt = 0;
+        for (const stage of present) {
+          const left = (previousAt / total) * 100;
+          const width = Math.max(0.4, ((stage.at - previousAt) / total) * 100);
+          rows.push(
+              `<div class="wf-row">` +
+                `<span class="wf-label">${stage.label}</span>` +
+                `<span class="wf-track">` +
+                  `<span class="wf-bar ${stage.cls}" ` +
+                      `style="left:${left}%;width:${width}%"></span>` +
+                `</span>` +
+                `<span class="wf-value">${ms(stage.at)}</span>` +
+              `</div>` +
+              (stage.note ?
+                  `<div class="wf-note">${escapeHtml(stage.note)}</div>` : ''));
+          previousAt = stage.at;
+        }
+
+        const requestLines = sample.requestDetail.map((r) =>
+            `<div class="wf-row"><span class="wf-label">&nbsp;&nbsp;${
+              escapeHtml(r.type)}</span>` +
+            `<span class="wf-track"><span class="wf-bar" style="left:${
+              (r.start / total) * 100}%;width:${
+              Math.max(0.4, (((r.end === null ? r.start : r.end) - r.start) /
+                  total) * 100)}%"></span></span>` +
+            `<span class="wf-value">${escapeHtml(r.uri)}</span></div>`);
+
+        waterfallElement.innerHTML = rows.join('') +
+            (requestLines.length ?
+                `<div class="wf-row" style="margin-top:.6rem">` +
+                `<span class="wf-label" style="color:var(--color-scooter)">` +
+                `${sample.requests} request(s), ${sample.serialHops} serial` +
+                `</span><span></span><span></span></div>` +
+                requestLines.join('') : '');
+      }
+
+      function escapeHtml(text) {
+        return String(text).replace(/[&<>"]/g, (c) => (
+          {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[c]);
+      }
+
+      function renderStats() {
+        const usable = samples.filter((s) => !s.discarded);
+        if (!usable.length && !firstTuneSample) {
+          statsElement.innerHTML =
+              '<p class="empty-note">No tunes yet. Press <kbd>1</kbd> or ' +
+              '<kbd>2</kbd>.</p>';
+          return;
+        }
+
+        const groups = new Map();
+        for (const sample of usable) {
+          const key = `CH ${sample.channelNumber} ${sample.channelName}`;
+          if (!groups.has(key)) {
+            groups.set(key, {format: sample.format, times: [], hops: [],
+              requests: []});
+          }
+          const group = groups.get(key);
+          group.times.push(sample.totalMs);
+          group.hops.push(sample.serialHops);
+          group.requests.push(sample.requests);
+        }
+        if (usable.length) {
+          groups.set('all zaps', {
+            format: '',
+            times: usable.map((s) => s.totalMs),
+            hops: usable.map((s) => s.serialHops),
+            requests: usable.map((s) => s.requests),
+          });
+        }
+
+        const rows = [];
+        for (const [label, group] of groups) {
+          rows.push(
+              `<tr><td>${escapeHtml(label)}</td>` +
+              `<td class="dim">${group.format}</td>` +
+              `<td>${group.times.length}</td>` +
+              `<td>${ms(Math.min(...group.times))}</td>` +
+              `<td><strong>${ms(percentile(group.times, 0.5))}</strong></td>` +
+              `<td>${ms(percentile(group.times, 0.95))}</td>` +
+              `<td>${ms(Math.max(...group.times))}</td>` +
+              `<td>${median(group.requests)} / ${median(group.hops)}</td></tr>`);
+        }
+
+        if (firstTuneSample) {
+          rows.push(
+              `<tr><td class="dim">first tune (excluded)</td>` +
+              `<td class="dim">${firstTuneSample.format}</td>` +
+              `<td class="dim">1</td><td class="dim">—</td>` +
+              `<td class="dim">${ms(firstTuneSample.totalMs)}</td>` +
+              `<td class="dim">—</td><td class="dim">—</td>` +
+              `<td class="dim">${firstTuneSample.requests} / ` +
+              `${firstTuneSample.serialHops}</td></tr>`);
+        }
+
+        const discarded = samples.filter((s) => s.discarded).length;
+        statsElement.innerHTML =
+            '<table><thead><tr><th>group</th><th>fmt</th><th>n</th>' +
+            '<th>min</th><th>median</th><th>p95</th><th>max</th>' +
+            '<th>req / hops</th></tr></thead><tbody>' +
+            rows.join('') + '</tbody></table>' +
+            (discarded ?
+                `<p class="empty-note">${discarded} sample(s) discarded ` +
+                `(tab hidden).</p>` : '');
+      }
+
+      function median(values) {
+        return values.length ? Math.round(percentile(values, 0.5)) : '—';
+      }
+
+      function renderSamples() {
+        const recent = samples.slice(-MAX_SAMPLE_ROWS).reverse();
+        if (!recent.length) {
+          samplesElement.innerHTML =
+              '<p class="empty-note">Zaps appear here once the first tune ' +
+              'has completed.</p>';
+          return;
+        }
+        const rows = recent.map((sample) =>
+            `<tr><td>#${sample.n}</td>` +
+            `<td>CH ${sample.channelNumber}</td>` +
+            `<td class="dim">${sample.format}</td>` +
+            `<td class="${sample.discarded ? 'bad' : ''}">` +
+            `${ms(sample.totalMs)}</td>` +
+            `<td>${sample.requests}</td>` +
+            `<td>${sample.serialHops}</td>` +
+            `<td class="dim">${kb(sample.bytes)}</td>` +
+            `<td class="dim">${sample.discarded ? 'discarded' :
+                (sample.isAuto ? 'auto' : 'manual')}</td></tr>`);
+        samplesElement.innerHTML =
+            '<table><thead><tr><th>#</th><th>ch</th><th>fmt</th>' +
+            '<th>to first frame</th><th>req</th><th>hops</th><th>bytes</th>' +
+            '<th></th></tr></thead><tbody>' + rows.join('') + '</tbody></table>';
+      }
+
+      function renderFootnote() {
+        const rvfc = typeof video.requestVideoFrameCallback === 'function';
+        footnote.textContent =
+            'Zap time is measured from the click to the first frame actually ' +
+            'painted' + (rvfc ?
+                ' (requestVideoFrameCallback), quantised to one frame interval.' :
+                ', via the `playing` event — this browser has no ' +
+                'requestVideoFrameCallback, so these numbers are later and ' +
+                'coarser than an rVFC measurement.') +
+            ' Every tune is a cold join: one player, nothing pre-fetched, ' +
+            'nothing of the outgoing channel retained. Serial hops counts ' +
+            'request generations that had to wait on a previous response — ' +
+            'the part of the comparison that does not shrink on a fast network.';
+      }
+
+      // -------------------------------------------------------- parser hooks
+
+      /**
+       * The parser publishes its progress through static hooks, so there is one
+       * set for the one player this page owns.  Each hook marks the probe,
+       * which is why the waterfall can show parse stages Shaka itself does not
+       * expose.
+       */
+      function installParserHooks() {
+        BjsnShakaParser.hooks.onLog = (message) => log(message);
+        BjsnShakaParser.hooks.onFirstByte = () => probe.mark('firstByte');
+        BjsnShakaParser.hooks.onBjsn = (bjsn) => {
+          probe.mark('bjsnParsed', bjsn && bjsn.seq_num !== undefined ?
+              `seq ${bjsn.seq_num}` : null);
+        };
+        BjsnShakaParser.hooks.onInit = () => probe.mark('moovParsed');
+        BjsnShakaParser.hooks.onManifest = () => probe.mark('manifestReady');
+        BjsnShakaParser.hooks.onSegmentResponse = () => {
+          consecutiveFailures = 0;
+        };
+      }
+
+      // ------------------------------------------------------------ bootstrap
+
+      function waitForShaka(timeoutMs) {
+        const startedAt = Date.now();
+        return new Promise((resolve, reject) => {
+          (function check() {
+            if (window.shaka && window.shaka.Player && window.shaka.polyfill &&
+                window.shaka.media && window.shaka.media.ManifestParser) {
+              resolve();
+              return;
+            }
+            if (Date.now() - startedAt > timeoutMs) {
+              reject(new Error(
+                  'Shaka Player did not finish loading. In uncompiled mode ' +
+                  'this usually means dist/deps.js is missing or stale — ' +
+                  'run: python3 build/gendeps.py'));
+              return;
+            }
+            setTimeout(check, 25);
+          })();
+        });
+      }
+
+      async function bootstrap() {
+        channels = loadChannels();
+        renderChannelUi();
+        renderStats();
+        renderSamples();
+        renderReadout();
+        renderFootnote();
+
+        try {
+          await waitForShaka(30000);
+        } catch (e) {
+          showWarning(e.message);
+          log('ERROR: ' + e.message);
+          return;
+        }
+
+        shaka.polyfill.installAll();
+        if (!shaka.Player.isBrowserSupported()) {
+          showWarning('This browser is not supported by Shaka Player.');
+          return;
+        }
+
+        BjsnShakaParser.register();
+        installParserHooks();
+
+        // One player, created once and attached once.  Every zap is a `load()`
+        // on this same instance: no destroy, no re-attach, so the number is
+        // the join cost and not Shaka teardown.
+        player = new shaka.Player();
+        player.addEventListener('error', (event) => {
+          const error = event.detail;
+          log('player error', {code: error.code, category: error.category});
+        });
+        // `initializeMediaSource: false` matters twice over.  It keeps the
+        // MediaSource out of bootstrap, so the first tune pays for opening it
+        // and the `sourceOpen` mark lands *after* the click where it belongs
+        // rather than before the page is even interactive.  And because
+        // opening a MediaSource waits on `sourceopen`, which Chrome never
+        // fires in a hidden tab, attaching eagerly would hang bootstrap
+        // outright in a background tab instead of letting the page come up and
+        // say what is wrong.
+        await player.attach(video, /* initializeMediaSource= */ false);
+        installNetworkFilters();
+
+        log(`Shaka Player ${shaka.Player.version} loaded (uncompiled)`);
+        log(`BJSN parser registered for mime "${BJSN_MIME_TYPE}"`);
+
+        if (document.visibilityState !== 'visible') {
+          showWarning(
+              'This tab is not in the foreground. Chrome gates media on tab ' +
+              'visibility, so tunes started now will be discarded.');
+        }
+
+        // Tune CH 1 immediately: muted autoplay is permitted, and a demo that
+        // opens on a black screen needs an explanation before it needs a
+        // keypress.  This one is recorded as the first tune and excluded from
+        // the zap median.
+        zap(0);
+      }
+
+      // --------------------------------------------------------------- wiring
+
+      chButtons.forEach((button, i) => {
+        button.addEventListener('click', () => zap(i));
+      });
+
+      autoZapBox.addEventListener('change', () => setAutoZap(autoZapBox.checked));
+      autoZapInterval.addEventListener('change', () => {
+        if (autoZapBox.checked) {
+          setAutoZap(true);  // Restart on the new interval.
+        }
+      });
+
+      mutedBox.addEventListener('change', () => {
+        video.muted = mutedBox.checked;
+      });
+
+      document.getElementById('setupToggle').addEventListener('click', () => {
+        setupPanel.classList.toggle('hidden');
+      });
+
+      document.getElementById('drawerToggle').addEventListener('click', () => {
+        drawer.classList.toggle('hidden');
+      });
+
+      document.getElementById('applyChannels').addEventListener('click', () => {
+        channels = [0, 1].map((i) => makeChannel(
+            i, nameInputs[i].value.trim(), urlInputs[i].value.trim()));
+        saveChannels();
+        renderChannelUi();
+        setupNote.textContent =
+            `${channels[0].format} / ${channels[1].format}`;
+        setupPanel.classList.add('hidden');
+        zap(0);
+      });
+
+      document.getElementById('resetStats').addEventListener('click', () => {
+        samples = [];
+        firstTuneSample = null;
+        renderStats();
+        renderSamples();
+        renderReadout();
+        log('statistics reset');
+      });
+
+      document.getElementById('copyJson').addEventListener('click', async () => {
+        const payload = {
+          generatedAt: new Date().toISOString(),
+          userAgent: navigator.userAgent,
+          measurement: typeof video.requestVideoFrameCallback === 'function' ?
+              'requestVideoFrameCallback' : 'playing event',
+          channels: channels.map((c) => ({
+            number: c.number, name: c.name, url: c.url, format: c.format,
+          })),
+          firstTune: firstTuneSample,
+          zaps: samples,
+        };
+        try {
+          await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+          log('results copied to the clipboard');
+        } catch (e) {
+          log('clipboard write failed; the payload is on the console instead');
+          console.log(payload);
+        }
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.target instanceof HTMLInputElement ||
+            event.target instanceof HTMLSelectElement) {
+          return;
+        }
+        switch (event.key) {
+          case '1': zap(0); break;
+          case '2': zap(1); break;
+          case ' ':
+            event.preventDefault();
+            zap(activeIndex === 0 ? 1 : 0);
+            break;
+          case 'm':
+            mutedBox.checked = !mutedBox.checked;
+            video.muted = mutedBox.checked;
+            break;
+          case 'a': setAutoZap(!autoZapBox.checked); break;
+          case 'd': drawer.classList.toggle('hidden'); break;
+          case 'c': setupPanel.classList.toggle('hidden'); break;
+          default: return;
+        }
+      });
+
+      // Chrome gates media on tab visibility, not focus, so a tune started in
+      // a background tab measures nothing.  Say so the moment the tab comes
+      // back rather than letting the next number look mysteriously bad.
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          hideWarning();
+        }
+      });
+
+      bootstrap();
+    })();
+  </script>
+</body>
+</html>

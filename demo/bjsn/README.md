@@ -9,6 +9,10 @@ harness and reporting the same startup metrics:
   via a manifest parser plugin registered from this directory. Zero changes to
   `lib/`.
 
+A third page, **`bjsn_zap_demo.html`**, is not a player but a demonstration:
+it measures how long a channel change takes. See
+[Fast channel switching](#fast-channel-switching-bjsn_zap_demohtml) below.
+
 The standalone player's behaviour is the contract the Shaka integration must
 match — see
 [`docs/design/bjsn-integration-plan-v2.md`](../../docs/design/bjsn-integration-plan-v2.md),
@@ -25,6 +29,7 @@ proven otherwise.
 | `bjsn_shaka_player.html` | Shaka player: same panels, plus a timeline/buffer pane and Shaka's own stats |
 | `bjsn_shaka_parser.js` | `BjsnShakaParser` (a `shaka.extern.ManifestParser`), `BjsnSegmentBytes` |
 | `bjsn_timing_probe.js` | `BjsnTimingProbe` — player-agnostic MSE instrumentation |
+| `bjsn_zap_demo.html` | Fast-channel-switching demo: two channels, cold zaps, measured to the first painted frame |
 | `spike-muxed-buffer.html` | Phase 1 architecture spike (see below) |
 
 `bjsn_player.html` is self-contained: it loads only the two sibling scripts, with
@@ -221,6 +226,108 @@ a test-harness technique and has no business anywhere near `lib/`.
 Option A means there is a single SourceBuffer, so the standalone player's
 separate "video init append" and "audio init append" numbers collapse into one
 init append. The panel says so rather than inventing two values.
+
+## Fast channel switching (`bjsn_zap_demo.html`)
+
+Demonstrates the property BJSN exists for: because every segment is
+self-initialising, joining a channel is **one HTTP request**. There is no
+manifest to fetch, no init segment, no separate audio request. A DASH or HLS
+join is a *serial chain* — manifest, then init, then media — where each response
+is what tells the player the next URL, so the round trips cannot be overlapped.
+
+Two channels, `1` and `2` to tune between them. Set-top-box framing: full-bleed
+video, an OSD banner naming the channel, its format and how long the tune took,
+and the outgoing frame held frozen for the length of the gap the way a real STB
+does. A metrics drawer (`d`) carries the engineering view.
+
+```
+/demo/bjsn/bjsn_zap_demo.html?a=<url>&b=<url>
+```
+
+Channels also persist to `localStorage`, so a demo survives the origin rotating
+its URLs. Format comes from the extension: `.mpd` → DASH, `.m3u8` → HLS,
+anything else → BJSN — so channel B can be a DASH stream of the same content,
+which is what turns the page from a number into a comparison.
+
+### What it measures, and what it deliberately does not
+
+**Zap time is click → first frame actually painted**, via
+`requestVideoFrameCallback`. Not `canplay`, and *especially* not `playing`,
+which is the event Chrome's tab-visibility gate corrupts. Firefox has no rVFC,
+so it falls back to `playing` and labels the sample as the coarser measurement
+rather than mixing the two silently.
+
+Every zap is a **cold join**: one `shaka.Player`, permanently attached to one
+video element, `load()` called again. Nothing is pre-fetched and nothing of the
+outgoing channel is retained. A dual-player pre-warm would switch in ~0 ms and
+prove nothing about the format — any format does that if you pay double
+bandwidth.
+
+Three numbers are kept apart from the median on purpose:
+
+- **The first tune is excluded.** It pays for MediaSource setup, codec
+  configuration and the connection to the origin; no later zap pays any of it.
+  Folding it in would overstate every zap.
+- **Samples taken while the tab was hidden are discarded, not recorded.** They
+  are not slow, they are meaningless — see below.
+- **Requests and serial hops are reported alongside the milliseconds.** On a
+  loopback origin the RTT is under a millisecond, so the *time* gap between BJSN
+  and DASH is nearly invisible while the structural gap is not. Serial hops
+  counts request generations that had to wait on a previous response, and that
+  figure does not shrink when the network gets fast. It is what carries the
+  argument on a laptop.
+
+`segmentPrefetchLimit: 0` is set for *both* formats, so the comparison is like
+for like — and for BJSN it is mandatory anyway, or every segment downloads
+twice. The failed-download policy from `bjsn_shaka_player.html` is applied to
+BJSN channels only; for DASH and HLS a missing segment is a real fault and
+Shaka's own default is the right one.
+
+### Running it
+
+The origin will normally occupy port 8080, so serve the repo somewhere else:
+
+```bash
+python3 build/gendeps.py            # once; writes dist/deps.js
+python3 -m http.server 8000
+# → http://127.0.0.1:8000/demo/bjsn/bjsn_zap_demo.html
+```
+
+Use `127.0.0.1`, not `localhost`. Chrome resolves `localhost` to `::1` while
+`python3 -m http.server` binds IPv4 only unless told otherwise, and the failure
+is a bare Chrome error page that looks like the file is missing.
+
+### Two things that will bite
+
+- **The window must be in the foreground.** Chrome gates media on tab
+  visibility, not focus: in a background tab `sourceopen` never fires, so
+  `load()` never resolves and the tune cannot start at all. The page detects
+  this and says so after 10 s rather than sitting on "tuning…" forever, but
+  there is no way to measure around it. For the same reason `attach()` is called
+  with `initializeMediaSource: false` — attaching eagerly would hang the page
+  before it could explain itself, and would also move the `sourceOpen` mark to
+  before the first click, where it does not belong.
+- **`Last-Segment-Duration` needs `Access-Control-Expose-Headers`.** The demo
+  page cannot be served from the origin's own port, so it is always
+  cross-origin. The reference origin exposes only `Content-Range` and
+  `Content-Length`, so the parser's `Last-Segment-Duration` read returns null
+  and it falls back to `tfdt` deltas. That degrades gracefully and is worth
+  fixing on the origin anyway.
+
+### Verification status (2026-08-10)
+
+Verified against the two reference streams (`livestream1` at seq 2595 and
+`livestream`, both single-gear, `template_path: media_${num}.mp4`, with
+`media_first.mp4` acting as a live-edge join alias): page bootstrap, parser
+registration, and the full BJSN parse path — first byte, `moov`, `bjsn`,
+manifest built live at the segment's `t0`, first forward reference published.
+The stuck-tune watchdog was verified by observation.
+
+End-to-end tuning and the frame-paint measurement were confirmed working in a
+foreground window. They could not be checked from the automation harness, which
+only ever runs the page in a background tab — precisely the case Chrome refuses
+to play — so no measured zap figures are recorded here yet. Take a run in a
+foreground window before quoting any number from this page.
 
 ## Test fixtures
 
