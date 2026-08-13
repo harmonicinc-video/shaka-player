@@ -1226,6 +1226,14 @@
           },
           streaming: {
             lowLatencyMode: lowLatencyBox.checked,
+            // The initial BJSN segment is exposed as a growing list of Shaka
+            // partial references.  When StreamingEngine reaches the current
+            // end of that list, it normally polls once per second.  A newly
+            // parsed partial does not directly wake StreamingEngine through
+            // the public manifest-parser interface, so use a short poll here
+            // to avoid an avoidable ~1s gap between the first append and
+            // canplay while the first response is still downloading.
+            updateIntervalSeconds: 0.1,
             // Own the failed-download policy rather than taking Shaka's, which
             // is fatal on static streams and retries on a flat 1 s. See
             // onStreamingFailure.

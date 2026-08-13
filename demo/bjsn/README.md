@@ -98,15 +98,21 @@ BJSN without touching `lib/`? It can. Three public extension points do it:
 | Extension point | Used for |
 | --- | --- |
 | `ManifestParser.registerParserByMime('application/bjsn', …)` | Registering the parser. Pass the mime type as `load()`'s third argument — a `.mp4` URL would otherwise be treated as progressive `src=` content. |
-| `InitSegmentReference.setSegmentData()` / `SegmentReference.setSegmentData()` | Handing over the already-downloaded first file, so it is never fetched twice. |
+| `InitSegmentReference.setSegmentData()` / `SegmentReference.setSegmentData()` | Handing over the already-downloaded init and partial media groups from the first file, so they are never fetched twice. |
 | `NetworkingEngine.registerResponseFilter()` | Stripping `bjsn` out of subsequent segments and reading the in-band `seq_num` back out of them. |
 
 ### Shape: Option A, and why *not* `isAudioMuxedInVideo`
 
 Per the Phase 1 spike the parser publishes a **single** video `Stream` whose
 codec string carries both codecs (`video/mp4; codecs="avc1.42E01E,mp4a.40.2"`)
-and leaves `variant.audio` null. One SourceBuffer, file appended as-is, browser
-decodes both tracks.
+and leaves `variant.audio` null. One SourceBuffer, with the initial file
+appended as groups of complete `moof`/`mdat` pairs and later files appended
+after the `bjsn` box is stripped; the browser decodes both tracks.
+
+The initial response is parsed progressively. Once the first few complete
+fragment groups are available, the parser publishes a Shaka segment reference
+with partial references and lets the response continue in the background. This
+removes the previous full-file wait while preserving the no-refetch property.
 
 `stream.isAudioMuxedInVideo` looks like the obvious flag for this and is the
 wrong one: it sets `needSplitMuxedContent_` in `media_source_engine.js`, which
@@ -126,6 +132,8 @@ per-track ABR. `player.getVariantTracks()` reports one video-only variant.
 Loading `test/test/assets/bjsn/media_11905.mp4`:
 
 - **one** SourceBuffer, `video/mp4; codecs="avc1.42E01E,mp4a.40.2"`
+- first media append contains multiple complete `moof`/`mdat` pairs before the
+  initial response has completed; later media appends contain filtered files
 - init append classified `ftyp+moov`, media appends `styp+moof+mdat…` — so
   `styp` survives the strip, which §3.1 warns about
 - both tracks decode (video *and* non-zero audio bytes), rendered 270x480
@@ -137,6 +145,14 @@ Startup marks from a representative run: source open 16 ms, first byte 38 ms,
 `bjsn` parsed 50 ms, `moov` parsed 47 ms, manifest ready 54 ms, `player.load()`
 resolved 101 ms, init append 112 ms, first media append 147 ms, `canplay`
 118–148 ms, playing 191 ms.
+
+The Shaka demo also sets `streaming.updateIntervalSeconds` to 0.1. The initial
+BJSN response is represented by a growing partial-reference list, but the
+public manifest-parser callback does not immediately wake Shaka's streaming
+loop when a new partial arrives. The shorter poll bounds that handoff delay;
+with the default one-second interval, `canplay` could trail
+`First Media Append Done` by roughly one second even though the parser was
+already receiving more bytes.
 
 ### Failed downloads
 
@@ -281,7 +297,10 @@ Three numbers are kept apart from the median on purpose:
 for like — and for BJSN it is mandatory anyway, or every segment downloads
 twice. The failed-download policy from `bjsn_shaka_player.html` is applied to
 BJSN channels only; for DASH and HLS a missing segment is a real fault and
-Shaka's own default is the right one.
+Shaka's own default is the right one. For BJSN, the ZAP demo also uses a 100 ms
+`updateIntervalSeconds`; otherwise a new partial reference can wait for
+Shaka's default one-second streaming poll before the first frame is considered
+ready.
 
 ### Running it
 

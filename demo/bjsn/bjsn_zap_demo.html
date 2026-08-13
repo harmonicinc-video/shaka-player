@@ -1318,6 +1318,14 @@
             },
           },
           streaming: {
+            // The initial BJSN response is exposed as a growing list of Shaka
+            // partial references.  StreamingEngine normally polls for the
+            // next reference once per second, and the public manifest-parser
+            // callback does not immediately wake that loop when a new partial
+            // arrives.  Bound the append-to-first-frame handoff to 100 ms.
+            // Restore the normal default for DASH/HLS because this player is
+            // also used to compare their cold-join behavior.
+            updateIntervalSeconds: isBjsn ? 0.1 : 1,
             // Off for *both* formats, so the comparison is like for like.  For
             // BJSN it is also mandatory: SegmentPrefetch caches the iterator it
             // builds on its first call, a BJSN index grows one reference at a

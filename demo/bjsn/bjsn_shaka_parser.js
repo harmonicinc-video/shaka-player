@@ -8,8 +8,8 @@
  *   1. `shaka.media.ManifestParser.registerParserByMime()` registers this class
  *      under `application/bjsn`.
  *   2. `InitSegmentReference.setSegmentData()` / `SegmentReference
- *      .setSegmentData()` hand the already-downloaded first file to the
- *      streaming pipeline, so it is never fetched twice.
+ *      .setSegmentData()` hand already-downloaded init and media bytes to the
+ *      streaming pipeline, so they are never fetched twice.
  *   3. A `NetworkingEngine` response filter strips the `bjsn` box out of
  *      subsequent segments and reads the in-band manifest state back out of
  *      them (plan section 3.5).
@@ -19,8 +19,10 @@
  * Per the Phase 1 spike (plan section 3.1) we publish a *single* video Stream
  * whose codec string carries both codecs, e.g.
  * `video/mp4; codecs="avc1.42E01E,mp4a.40.2"`, and leave `variant.audio` null.
- * Shaka creates one SourceBuffer and appends the file verbatim; the browser
- * decodes both tracks out of it.
+ * Shaka creates one SourceBuffer and decodes both tracks out of it.  The
+ * initial file is appended as groups of complete moof/mdat pairs through
+ * Shaka's partial-reference API; later files are filtered to media before
+ * reaching the same SourceBuffer.
  *
  * Note what we deliberately do *not* use: `stream.isAudioMuxedInVideo`.  That
  * flag looks like the obvious fit, but it sets `needSplitMuxedContent_` in
@@ -339,11 +341,39 @@ class BjsnShakaParser {
     this.initBytes_ = null;
     /** @private {?Uint8Array} The complete first file. */
     this.firstFileBytes_ = null;
+    /**
+     * Partial references for the initial file.  BJSN's first file is one
+     * logical segment containing many complete moof/mdat pairs.  Keeping each
+     * pair as a Shaka partial reference lets StreamingEngine append the pairs
+     * that have arrived without waiting for the logical segment to finish.
+     *
+     * @private {!Array<!shaka.media.SegmentReference>}
+     */
+    this.initialPartialReferences_ = [];
+    /** @private {!Array<!Object>} */
+    this.pendingInitialFragments_ = [];
+    /** @private {number} */
+    this.initialPartialFragmentCount_ = 4;
+    /** @private {?shaka.media.SegmentReference} */
+    this.initialSegmentReference_ = null;
+    /** @private {?shaka.media.SegmentReference} */
+    this.lastInitialPartial_ = null;
+    /** @private {?number} */
+    this.lastInitialPartialStartTime_ = null;
+    /** @private {?BjsnDeferred} */
+    this.initialPartialReady_ = null;
+    /** @private {boolean} */
+    this.initialFileComplete_ = false;
+    /** @private {boolean} */
+    this.initialFileFinalized_ = false;
     /** @private {?number} */
     this.t0_ = null;
     /** @private {?number} */
     this.segmentDuration_ = null;
-    /** @private {?number} Duration reported by `Last-Segment-Duration`, in s. */
+    /**
+     * Duration reported by `Last-Segment-Duration`, in seconds.
+     * @private {?number}
+     */
     this.reportedDuration_ = null;
     /** @private {?number} The seq_num of the last reference we published. */
     this.lastSeqNum_ = null;
@@ -417,6 +447,7 @@ class BjsnShakaParser {
     this.baseUri_ = new URL(uri, location.href);
     this.ready_ = new BjsnDeferred();
     this.firstFileComplete_ = new BjsnDeferred();
+    this.initialPartialReady_ = new BjsnDeferred();
 
     this.installResponseFilter_();
 
@@ -434,7 +465,7 @@ class BjsnShakaParser {
     // the standalone player comes from.  The fetch plugin clones the response
     // for streaming, so `response.data` below is still the complete body.
     let sawChunk = false;
-    request.streamDataCallback = async (chunk) => {
+    request.streamDataCallback = (chunk) => {
       if (this.stopped_) {
         return;
       }
@@ -463,7 +494,10 @@ class BjsnShakaParser {
         progressive.appendData(this.firstFileBytes_);
       }
       this.readLastSegmentDuration_(response);
+      this.initialFileComplete_ = true;
+      this.flushInitialPartial_();
       this.firstFileComplete_.resolve();
+      this.finalizeInitialSegment_();
       // Guard against a file that somehow lacked bjsn or moov: without this,
       // `start()` would hang instead of failing.
       if (!this.ready_.resolved) {
@@ -473,6 +507,7 @@ class BjsnShakaParser {
     }, (error) => {
       this.ready_.reject(error);
       this.firstFileComplete_.reject(error);
+      this.initialPartialReady_.reject(error);
     });
 
     await this.ready_.promise;
@@ -493,6 +528,9 @@ class BjsnShakaParser {
     }
     if (this.ready_ && !this.ready_.resolved) {
       this.ready_.reject(this.abortError_());
+    }
+    if (this.initialPartialReady_ && !this.initialPartialReady_.resolved) {
+      this.initialPartialReady_.reject(this.abortError_());
     }
     if (this.operation_) {
       const operation = this.operation_;
@@ -585,9 +623,8 @@ class BjsnShakaParser {
   }
 
   /**
-   * Fragments arrive here purely so we can learn `t0` -- the media time the
-   * presentation actually starts at -- before the whole file has downloaded.
-   * The bytes themselves are not used: Shaka appends whole segments.
+   * Fragments arrive here so we can learn `t0` and build partial references
+   * before the whole file has downloaded.
    *
    * @param {number} trackId
    * @param {!Uint8Array} fragment
@@ -615,7 +652,80 @@ class BjsnShakaParser {
       this.firstFragmentTimes_[trackId] = mediaTime;
       this.log_(`first ${track.handlerType} fragment at ` +
           `${mediaTime.toFixed(3)}s (track ${trackId})`);
-      this.maybeBuildManifest_();
+    }
+
+    this.pendingInitialFragments_.push({track, mediaTime, fragment});
+    if (this.pendingInitialFragments_.length >=
+        this.initialPartialFragmentCount_) {
+      this.flushInitialPartial_();
+    }
+    this.maybeBuildManifest_();
+  }
+
+  /**
+   * Adds a small group of complete moof/mdat pairs from the initial response
+   * to the open initial segment.  A group is large enough to keep audio and
+   * video append timing robust, while still being small enough to preserve
+   * progressive startup.
+   *
+   * @private
+   */
+  flushInitialPartial_() {
+    if (!this.pendingInitialFragments_.length) {
+      return;
+    }
+    const fragments = this.pendingInitialFragments_.splice(
+        0, this.initialPartialFragmentCount_);
+    const first = fragments[0];
+    const last = fragments[fragments.length - 1];
+    const epsilon = 1e-6;
+    const startTime = this.lastInitialPartialStartTime_ === null ?
+        first.mediaTime : Math.max(first.mediaTime,
+            this.lastInitialPartialStartTime_ + epsilon);
+    const provisionalDuration = last.track.handlerType === 'vide' ?
+        1 / 30 : 0.025;
+    const totalLength = fragments.reduce(
+        (total, item) => total + item.fragment.length, 0);
+    const data = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const item of fragments) {
+      data.set(item.fragment, offset);
+      offset += item.fragment.length;
+    }
+    const partial = new shaka.media.SegmentReference(
+        startTime,
+        Math.max(startTime + epsilon,
+            last.mediaTime + provisionalDuration),
+        () => [this.uri_],
+        /* startByte= */ 0,
+        /* endByte= */ null,
+        this.initReference_,
+        /* timestampOffset= */ 0,
+        /* appendWindowStart= */ 0,
+        /* appendWindowEnd= */ Infinity);
+    partial.setSegmentData(data);
+    partial.markAsPartial();
+
+    if (this.lastInitialPartial_) {
+      // The next fragment gives the most accurate end for the previous
+      // partial, and ensures the SegmentIndex sees a contiguous sequence.
+      this.lastInitialPartial_.endTime = startTime;
+    }
+    this.initialPartialReferences_.push(partial);
+    this.lastInitialPartial_ = partial;
+    this.lastInitialPartialStartTime_ = startTime;
+
+    // StreamingEngine may currently be waiting because the iterator reached
+    // the end of the partial list.  Wake it when another pair arrives.
+    if (this.initialSegmentReference_ && this.playerInterface_) {
+      this.playerInterface_.onManifestUpdated();
+    }
+
+    const haveAllTracks = this.tracks_ && this.firstFragmentTimes_ &&
+        this.tracks_.every((t) => this.firstFragmentTimes_[t.id] !== undefined);
+    if (haveAllTracks && this.initialPartialReady_ &&
+        !this.initialPartialReady_.resolved) {
+      this.initialPartialReady_.resolve();
     }
   }
 
@@ -795,21 +905,88 @@ class BjsnShakaParser {
   }
 
   /**
-   * Shaka calls this once, before it uses the segment index.  We use it as the
-   * join point for the rest of the first file: by the time the index exists,
-   * the bytes are in hand and can be attached to the first reference, so the
-   * streaming pipeline never downloads the file a second time.
+   * Shaka calls this once, before it uses the segment index.  We wait only for
+   * the first partial media groups, then let the response continue in the
+   * background.  The segment reference owns the same partial-reference array,
+   * so later groups become available through `onManifestUpdated()` without a
+   * second request for the first file.
    *
    * @return {!Promise}
    * @private
    */
   async createSegmentIndex_() {
-    await this.firstFileComplete_.promise;
+    // The first response is a logical segment, but it contains complete
+    // moof/mdat pairs that can be appended independently.  Wait only until
+    // the first pair for every track is available; waiting for
+    // firstFileComplete_ defeats progressive startup.
+    await this.initialPartialReady_.promise;
     if (this.stopped_) {
       return;
     }
     if (this.segmentIndex_) {
       this.stream_.segmentIndex = this.segmentIndex_;
+      return;
+    }
+
+    this.initReference_ = new shaka.media.InitSegmentReference(
+        () => [this.uri_], /* startByte= */ 0, /* endByte= */ null);
+    // No network request: Shaka's fetch path checks getSegmentData() first.
+    this.initReference_.setSegmentData(this.initBytes_);
+
+    const seqNum = this.bjsn_.seq_num;
+    // The complete duration is not known until all tfdt boxes arrive.  Two
+    // seconds is the established BJSN segment cadence and is corrected when
+    // the response finishes in finalizeInitialSegment_().
+    this.segmentDuration_ = this.reportedDuration_ || 2.0;
+    const reference = new shaka.media.SegmentReference(
+        this.t0_,
+        this.t0_ + this.segmentDuration_,
+        () => [this.uri_],
+        /* startByte= */ 0,
+        /* endByte= */ null,
+        this.initReference_,
+        /* timestampOffset= */ 0,
+        /* appendWindowStart= */ 0,
+        /* appendWindowEnd= */ Infinity,
+        this.initialPartialReferences_);
+    // Partial references may have been created before moov was available to
+    // create this init reference.  Propagate the real init to all of them.
+    reference.updateInitSegmentReference(this.initReference_);
+
+    this.segmentIndex_ = new shaka.media.SegmentIndex([reference]);
+    this.stream_.segmentIndex = this.segmentIndex_;
+    this.initialSegmentReference_ = reference;
+    this.lastSeqNum_ = seqNum;
+    this.lastEndTime_ = reference.endTime;
+    // This one is already in hand, so it counts as received.
+    this.receivedSeqNum_ = seqNum;
+    this.receivedEndTime_ = reference.endTime;
+    this.timeline_.notifySegments([reference]);
+    this.fire_('onSegmentAdded', seqNum, reference.startTime,
+        reference.endTime);
+
+    if (!this.initialFileComplete_) {
+      this.firstFileComplete_.promise.then(
+          () => this.finalizeInitialSegment_(), () => {});
+    } else {
+      this.finalizeInitialSegment_();
+    }
+
+    if (!this.timeline_.isLive()) {
+      this.timeline_.setDuration(reference.endTime);
+    }
+  }
+
+  /**
+   * Closes the initial logical segment once its response is complete.  The
+   * partial list has already been consumed by Shaka as data arrived; marking
+   * it complete permits the iterator to advance to the next BJSN file.
+   *
+   * @private
+   */
+  finalizeInitialSegment_() {
+    if (!this.initialFileComplete_ || this.initialFileFinalized_ ||
+        !this.initialSegmentReference_ || !this.firstFileBytes_) {
       return;
     }
 
@@ -819,40 +996,31 @@ class BjsnShakaParser {
     }
     const timing = BjsnSegmentBytes.timing(
         this.firstFileBytes_, timescaleByTrackId);
-    this.segmentDuration_ =
-        this.reportedDuration_ || timing.duration || 2.0;
+    this.segmentDuration_ = this.reportedDuration_ || timing.duration ||
+        this.segmentDuration_ || 2.0;
     this.log_(`segment duration ${this.segmentDuration_.toFixed(3)}s ` +
         `(${this.reportedDuration_ ? 'Last-Segment-Duration header' :
             'derived from tfdt deltas'})`, timing.perTrack);
 
-    const split = BjsnSegmentBytes.split(this.firstFileBytes_);
+    this.initialSegmentReference_.endTime =
+        this.t0_ + this.segmentDuration_;
+    this.lastEndTime_ = this.initialSegmentReference_.endTime;
+    this.receivedEndTime_ = this.initialSegmentReference_.endTime;
 
-    this.initReference_ = new shaka.media.InitSegmentReference(
-        () => [this.uri_], /* startByte= */ 0, /* endByte= */ null);
-    // No network request: Shaka's fetch path checks getSegmentData() first.
-    this.initReference_.setSegmentData(this.initBytes_);
-
-    const seqNum = this.bjsn_.seq_num;
-    const reference = this.makeReference_(
-        seqNum, this.t0_, this.t0_ + this.segmentDuration_, this.uri_);
-    // The media-only slice, so the redundant ftyp+moov that every BJSN segment
-    // carries is not appended a second time on top of the init segment.
-    reference.setSegmentData(split.media || this.firstFileBytes_);
-
-    this.segmentIndex_ = new shaka.media.SegmentIndex([reference]);
-    this.stream_.segmentIndex = this.segmentIndex_;
-    this.lastSeqNum_ = seqNum;
-    this.lastEndTime_ = reference.endTime;
-    // This one is already in hand, so it counts as received.
-    this.receivedSeqNum_ = seqNum;
-    this.receivedEndTime_ = reference.endTime;
-    this.timeline_.notifySegments([reference]);
-    this.fire_('onSegmentAdded', seqNum, reference.startTime, reference.endTime);
+    const partials = this.initialSegmentReference_.partialReferences;
+    if (partials.length) {
+      partials[partials.length - 1].endTime =
+          this.initialSegmentReference_.endTime;
+      partials[partials.length - 1].markAsLastPartial();
+    }
+    this.initialSegmentReference_.allPartialSegments = true;
+    this.timeline_.notifySegments([this.initialSegmentReference_]);
+    this.initialFileFinalized_ = true;
 
     if (this.timeline_.isLive()) {
       this.scheduleNextReference_(0);
     } else {
-      this.timeline_.setDuration(reference.endTime);
+      this.timeline_.setDuration(this.initialSegmentReference_.endTime);
     }
   }
 
@@ -885,8 +1053,9 @@ class BjsnShakaParser {
    * @private
    */
   uriForSeqNum_(seqNum) {
+    const placeholder = String.fromCharCode(36) + '{num}';
     const file = String(this.bjsn_.template_path)
-        .replace('${num}', String(seqNum));
+        .replace(placeholder, String(seqNum));
     return new URL(file, this.baseUri_).href;
   }
 
@@ -933,7 +1102,8 @@ class BjsnShakaParser {
       // segment to be published, and it is also what a dead origin looks like.
       if (this.waitingTicks_ === 1 || this.waitingTicks_ % 10 === 0) {
         this.log_(`waiting for seq ${this.lastSeqNum_} to be published ` +
-            `(${this.waitingTicks_} tick${this.waitingTicks_ === 1 ? '' : 's'})`);
+            `(${this.waitingTicks_} tick${this.waitingTicks_ === 1 ? '' :
+                's'})`);
       }
       return;
     }
@@ -1051,8 +1221,8 @@ class BjsnShakaParser {
   }
 
   /**
-   * `Last-Segment-Duration` states the actual duration, in ms, of the
-   * *previous* segment (plan section 2b).  It is authoritative where our `tfdt`
+   * `Last-Segment-Duration` states the actual duration, in ms, of the previous
+   * segment (plan section 2b).  It is authoritative where our `tfdt`
    * derivation is an estimate, but it arrives one segment late and so cannot
    * size the first one.  Segment durations are near-constant, so we use it as
    * the estimate for subsequent references.

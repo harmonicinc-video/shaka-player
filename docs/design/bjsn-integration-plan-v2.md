@@ -473,7 +473,7 @@ tree:
 | API | Location | Use |
 | --- | --- | --- |
 | `ManifestParser.registerParserByMime()` | `lib/media/manifest_parser.js:44` | Register `BjsnManifestParser` under e.g. `application/bjsn`. Replaces the `preload_manager` hack. |
-| `InitSegmentReference.setSegmentData()` / `SegmentReference.setSegmentData()` | `lib/media/segment_reference.js:125, 634` | Hand the synthesised per-track init segments and the already-downloaded first file to the streaming pipeline with **no second network request**. `streaming_engine.fetch_` checks `getSegmentData()` first. |
+| `InitSegmentReference.setSegmentData()` / `SegmentReference.setSegmentData()` | `lib/media/segment_reference.js:125, 634` | Hand the synthesised init segment and already-downloaded initial partial media groups to the streaming pipeline with **no second network request**. `streaming_engine.fetch_` checks `getSegmentData()` first. |
 | `TransmuxerEngine.registerTransmuxer()` | `lib/transmuxer/transmuxer_engine.js:32` | `transmux(data, stream, reference, duration, contentType)` receives `contentType` — the exact hook for "strip `bjsn`, return only this track's `moof`+`mdat` pairs". Replaces the `media_source_engine` hack. |
 
 ### 3.1 Two candidate shapes — resolve by spike, not by argument
@@ -581,19 +581,20 @@ start(uri, playerInterface)
   ├─ feed BjsnStreamParser until bjsn AND moov are complete   ← resolve start() here
   │    ├─ bjsn → seq_num, template_path, gear_list, type (static|dynamic)
   │    └─ moov → tracks[] (id, handlerType, timescale), per-track init, codecs
-  ├─ keep draining the rest of the file in the background; retain the bytes
+  ├─ keep draining the rest of the file in the background; group complete
+  │    moof/mdat pairs into partial references and retain their bytes
   ├─ build Manifest:
   │    ├─ PresentationTimeline (dynamic if bjsn.type == 'dynamic')
   │    ├─ Variant + Stream(s), codecs from detection (Option A: one muxed Stream)
   │    ├─ InitSegmentReference with setSegmentData(synthesised init)   ← no fetch
-  │    └─ SegmentIndex seeded with reference #seq_num,
-  │         setSegmentData(retained first-file bytes)                 ← no refetch
+  │    └─ SegmentIndex seeded with reference #seq_num and its partial
+  │         references carrying the initial media groups                 ← no refetch
   └─ live: update() adds the next reference and advances seq_num
 ```
 
 Startup latency ≈ the working player's, because `start()` resolves on
-`bjsn`+`moov` rather than on the whole file, and the retained bytes mean the
-first segment is never downloaded twice.
+`bjsn`+`moov` plus the first partial media groups rather than on the whole file,
+and the retained bytes mean the first segment is never downloaded twice.
 
 ### 3.4 Timeline mapping — the part the standalone player skipped
 
@@ -928,7 +929,11 @@ identical axes (§3.6). What remains is to run it against the standalone player
 too and put the two columns side by side. Note that Option A's single
 SourceBuffer collapses the separate video/audio init-append numbers into one, and
 that Chrome pauses muted media in a hidden tab — read startup timings with the
-window in front or they are meaningless. Then enable `lowLatencyMode` so
+window in front or they are meaningless. The demo also uses a 100 ms
+`updateIntervalSeconds`: the parser grows the initial partial-reference list,
+but the public parser callback does not immediately wake StreamingEngine when a
+new partial arrives. The shorter poll prevents a default one-second delay
+between the first append and `canplay`. Then enable `lowLatencyMode` so
 `streaming_engine`'s existing chunked-append path (`streaming_engine.js:1912`)
 gives Shaka the same progressive behaviour the standalone player gets for free.
 *Exit:* Shaka's time-to-playing within ~15% of the standalone player, and the
