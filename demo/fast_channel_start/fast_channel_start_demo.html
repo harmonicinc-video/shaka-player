@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BJSN Fast Channel Switching - Harmonic Inc</title>
+  <title>Fast Channel Start - Harmonic Inc</title>
   <style>
     :root {
       /* Harmonic Inc brand colours, as bjsn_shaka_player.html. */
@@ -488,7 +488,7 @@
         <span class="osd-name" id="osdName">&mdash;</span>
       </div>
       <div class="osd-bottom">
-        <span class="badge" id="osdBadge">BJSN</span>
+        <span class="badge" id="osdBadge">Fast Channel Start</span>
         <span class="osd-tune" id="osdTune">tuning&hellip;</span>
         <span class="live"><span class="live-dot" id="osdDot"></span>LIVE</span>
       </div>
@@ -543,7 +543,8 @@
     </div>
     <p class="setup-note">
       Format is taken from the extension: <code>.mpd</code> &rarr; DASH,
-      <code>.m3u8</code> &rarr; HLS, anything else &rarr; BJSN. Channels persist
+      <code>.m3u8</code> &rarr; HLS, anything else &rarr; Fast Channel Start.
+      Channels persist
       to <code>localStorage</code> and can be shared as
       <code>?a=&hellip;&amp;b=&hellip;</code>.
     </p>
@@ -600,9 +601,9 @@
   <script defer src="../../lib/debug/asserts.js"></script>
   <script defer src="../../shaka-player.uncompiled.js"></script>
 
-  <script src="bjsn_utils.js"></script>
-  <script src="bjsn_timing_probe.js"></script>
-  <script src="bjsn_shaka_parser.js"></script>
+  <script src="../bjsn/bjsn_utils.js"></script>
+  <script src="../bjsn/bjsn_timing_probe.js"></script>
+  <script src="../bjsn/bjsn_shaka_parser.js"></script>
 
   <script type="text/javascript">
     (function() {
@@ -709,13 +710,17 @@
 
       // ---------------------------------------------------------- utilities
 
+      function uiText(text) {
+        return String(text).replace(/\bBJSN\b/gi, 'Fast Channel Start');
+      }
+
       function log(message, ...args) {
         console.log(message, ...args);
         const stamp = new Date().toLocaleTimeString();
         const extra = args.length ?
-            ' ' + args.map((a) => safeJson(a)).join(' ') : '';
+            ' ' + args.map((a) => uiText(safeJson(a))).join(' ') : '';
         let lines = drawerLog.textContent.split('\n').filter((l) => l.trim());
-        lines.push(`[${stamp}] ${message}${extra}`);
+        lines.push(`[${stamp}] ${uiText(message)}${extra}`);
         if (lines.length > MAX_LOG_LINES) {
           lines = lines.slice(lines.length - MAX_LOG_LINES);
         }
@@ -744,7 +749,7 @@
       }
 
       function showWarning(text) {
-        warn.textContent = text;
+        warn.textContent = uiText(text);
         warn.classList.remove('hidden');
       }
 
@@ -771,27 +776,32 @@
        * content.  DASH and HLS are left to Shaka's own detection.
        *
        * @param {string} url
-       * @return {{format: string, mime: ?string}}
+       * @return {{format: string, label: string, mime: ?string}}
        */
       function classify(url) {
         const path = url.split('?')[0].toLowerCase();
         if (path.endsWith('.mpd')) {
-          return {format: 'DASH', mime: null};
+          return {format: 'DASH', label: 'DASH', mime: null};
         }
         if (path.endsWith('.m3u8')) {
-          return {format: 'HLS', mime: null};
+          return {format: 'HLS', label: 'HLS', mime: null};
         }
-        return {format: 'BJSN', mime: BJSN_MIME_TYPE};
+        return {
+          format: 'BJSN',
+          label: 'Fast Channel Start',
+          mime: BJSN_MIME_TYPE,
+        };
       }
 
       function makeChannel(index, name, url) {
-        const {format, mime} = classify(url);
+        const {format, label, mime} = classify(url);
         return {
           index,
           number: index + 1,
           name: name || `Channel ${index + 1}`,
           url,
           format,
+          label,
           mime,
         };
       }
@@ -834,7 +844,7 @@
       function renderChannelUi() {
         channels.forEach((channel, i) => {
           chButtons[i].querySelector('.label').textContent = channel.name;
-          chButtons[i].title = `${channel.format} — ${channel.url}`;
+          chButtons[i].title = `${channel.label} — ${channel.url}`;
           nameInputs[i].value = channel.name;
           urlInputs[i].value = channel.url;
         });
@@ -880,7 +890,7 @@
       function showOsd(channel, state, tuneMs) {
         osdNum.textContent = `CH ${channel.number}`;
         osdName.textContent = channel.name;
-        osdBadge.textContent = channel.format;
+        osdBadge.textContent = channel.label;
         osdBadge.className = 'badge ' + channel.format.toLowerCase();
 
         if (state === 'tuning') {
@@ -1109,7 +1119,7 @@
         configureFor(channel);
         video.muted = mutedBox.checked;
 
-        log(`zap → CH ${channel.number} "${channel.name}" (${channel.format}) ` +
+        log(`zap → CH ${channel.number} "${channel.name}" (${channel.label}) ` +
             channel.url);
 
         try {
@@ -1248,6 +1258,7 @@
           channelNumber: channel.number,
           channelName: channel.name,
           format: channel.format,
+          label: channel.label,
           url: channel.url,
           totalMs: total,
           marks,
@@ -1395,7 +1406,7 @@
         const STAGES = [
           ['sourceOpen', 'MediaSource open', ''],
           ['firstByte', 'first byte of segment', 'network'],
-          ['bjsnParsed', 'bjsn box parsed', ''],
+          ['bjsnParsed', 'Fast Channel Start metadata parsed', ''],
           ['moovParsed', 'moov parsed', ''],
           ['manifestReady', 'manifest ready', ''],
           ['loadResolved', 'player.load() resolved', ''],
@@ -1410,7 +1421,7 @@
 
         wfTitle.textContent =
             `CH ${sample.channelNumber} ${sample.channelName} · ` +
-            `${sample.format} · ${ms(sample.totalMs)}` +
+            `${sample.label || sample.format} · ${ms(sample.totalMs)}` +
             (sample.discarded ? ' · DISCARDED (tab hidden)' : '');
 
         const present = STAGES
@@ -1476,7 +1487,7 @@
         for (const sample of usable) {
           const key = `CH ${sample.channelNumber} ${sample.channelName}`;
           if (!groups.has(key)) {
-            groups.set(key, {format: sample.format, times: [], hops: [],
+            groups.set(key, {format: sample.label || sample.format, times: [], hops: [],
               requests: []});
           }
           const group = groups.get(key);
@@ -1509,7 +1520,7 @@
         if (firstTuneSample) {
           rows.push(
               `<tr><td class="dim">first tune (excluded)</td>` +
-              `<td class="dim">${firstTuneSample.format}</td>` +
+              `<td class="dim">${firstTuneSample.label || firstTuneSample.format}</td>` +
               `<td class="dim">1</td><td class="dim">—</td>` +
               `<td class="dim">${ms(firstTuneSample.totalMs)}</td>` +
               `<td class="dim">—</td><td class="dim">—</td>` +
@@ -1543,7 +1554,7 @@
         const rows = recent.map((sample) =>
             `<tr><td>#${sample.n}</td>` +
             `<td>CH ${sample.channelNumber}</td>` +
-            `<td class="dim">${sample.format}</td>` +
+            `<td class="dim">${sample.label || sample.format}</td>` +
             `<td class="${sample.discarded ? 'bad' : ''}">` +
             `${ms(sample.totalMs)}</td>` +
             `<td>${sample.requests}</td>` +
@@ -1662,7 +1673,7 @@
         installNetworkFilters();
 
         log(`Shaka Player ${shaka.Player.version} loaded (uncompiled)`);
-        log(`BJSN parser registered for mime "${BJSN_MIME_TYPE}"`);
+        log('Fast Channel Start parser registered');
 
         if (document.visibilityState !== 'visible') {
           showWarning(
@@ -1708,7 +1719,7 @@
         saveChannels();
         renderChannelUi();
         setupNote.textContent =
-            `${channels[0].format} / ${channels[1].format}`;
+            `${channels[0].label} / ${channels[1].label}`;
         setupPanel.classList.add('hidden');
         zap(0);
       });

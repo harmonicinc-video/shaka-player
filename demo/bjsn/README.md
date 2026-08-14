@@ -9,9 +9,9 @@ harness and reporting the same startup metrics:
   via a manifest parser plugin registered from this directory. Zero changes to
   `lib/`.
 
-A third page, **`bjsn_zap_demo.html`**, is not a player but a demonstration:
+A third page, **`../fast_channel_start/fast_channel_start_demo.html`**, is not a player but a demonstration:
 it measures how long a channel change takes. See
-[Fast channel switching](#fast-channel-switching-bjsn_zap_demohtml) below.
+[Fast Channel Start](#fast-channel-start-fast_channel_start_demohtml) below.
 
 The standalone player's behaviour is the contract the Shaka integration must
 match — see
@@ -29,7 +29,7 @@ proven otherwise.
 | `bjsn_shaka_player.html` | Shaka player: same panels, plus a timeline/buffer pane and Shaka's own stats |
 | `bjsn_shaka_parser.js` | `BjsnShakaParser` (a `shaka.extern.ManifestParser`), `BjsnSegmentBytes` |
 | `bjsn_timing_probe.js` | `BjsnTimingProbe` — player-agnostic MSE instrumentation |
-| `bjsn_zap_demo.html` | Fast-channel-switching demo: two channels, cold zaps, measured to the first painted frame |
+| `../fast_channel_start/fast_channel_start_demo.html` | Fast Channel Start demo: two channels, cold zaps, measured to the first painted frame |
 | `spike-muxed-buffer.html` | Phase 1 architecture spike (see below) |
 
 `bjsn_player.html` is self-contained: it loads only the two sibling scripts, with
@@ -243,7 +243,7 @@ Option A means there is a single SourceBuffer, so the standalone player's
 separate "video init append" and "audio init append" numbers collapse into one
 init append. The panel says so rather than inventing two values.
 
-## Fast channel switching (`bjsn_zap_demo.html`)
+## Fast Channel Start (`fast_channel_start_demo.html`)
 
 Demonstrates the property BJSN exists for: because every segment is
 self-initialising, joining a channel is **one HTTP request**. There is no
@@ -257,7 +257,7 @@ and the outgoing frame held frozen for the length of the gap the way a real STB
 does. A metrics drawer (`d`) carries the engineering view.
 
 ```
-/demo/bjsn/bjsn_zap_demo.html?a=<url>&b=<url>
+/demo/fast_channel_start/fast_channel_start_demo.html?a=<url>&b=<url>
 ```
 
 Channels also persist to `localStorage`, so a demo survives the origin rotating
@@ -309,7 +309,7 @@ The origin will normally occupy port 8080, so serve the repo somewhere else:
 ```bash
 python3 build/gendeps.py            # once; writes dist/deps.js
 python3 -m http.server 8000
-# → http://127.0.0.1:8000/demo/bjsn/bjsn_zap_demo.html
+# → http://127.0.0.1:8000/demo/fast_channel_start/fast_channel_start_demo.html
 ```
 
 Use `127.0.0.1`, not `localhost`. Chrome resolves `localhost` to `::1` while
